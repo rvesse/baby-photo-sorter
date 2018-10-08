@@ -2,15 +2,27 @@ package com.github.rvesse.baby.photo.sorter;
 
 import java.io.File;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 import javax.inject.Inject;
 
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.core.Filter;
+import org.apache.logging.log4j.core.LoggerContext;
+import org.apache.logging.log4j.core.appender.ConsoleAppender;
+import org.apache.logging.log4j.core.config.ConfigurationFactory;
+import org.apache.logging.log4j.core.config.Configurator;
+import org.apache.logging.log4j.core.config.builder.api.AppenderComponentBuilder;
+import org.apache.logging.log4j.core.config.builder.api.ConfigurationBuilder;
+import org.apache.logging.log4j.core.config.builder.api.ConfigurationBuilderFactory;
+import org.apache.logging.log4j.core.config.builder.impl.BuiltConfiguration;
 import org.joda.time.Instant;
 import org.joda.time.format.DateTimeFormatter;
 import org.joda.time.format.DateTimeFormatterBuilder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.github.rvesse.airline.annotations.Command;
 import com.github.rvesse.airline.annotations.Option;
@@ -22,6 +34,7 @@ import com.github.rvesse.airline.annotations.restrictions.Required;
 import com.github.rvesse.airline.annotations.restrictions.ranges.IntegerRange;
 import com.github.rvesse.airline.model.CommandMetadata;
 import com.github.rvesse.airline.parser.errors.handlers.CollectAll;
+import com.github.rvesse.baby.photo.sorter.files.CreationDateComparator;
 import com.github.rvesse.baby.photo.sorter.files.ExtensionFilter;
 import com.github.rvesse.baby.photo.sorter.model.Configuration;
 import com.github.rvesse.baby.photo.sorter.model.Photo;
@@ -30,6 +43,8 @@ import com.github.rvesse.baby.photo.sorter.model.naming.NamingScheme;
 @Command(name = "baby-photo-sorter", description = "Organises, sorts and renames baby photos based on configurable age brackets")
 @Parser(flagNegationPrefix = "--no-", errorHandler = CollectAll.class)
 public class BabyPhotoSorter {
+    
+    private static Logger LOGGER;
 
     @SuppressWarnings("unused")
     @Inject
@@ -88,8 +103,26 @@ public class BabyPhotoSorter {
     @Option(name = { "-e",
             "--extension" }, title = "Extensions", description = "Specifies the file extensions that are treated as photos, if not specified then .jpg and .jpeg are the only file extensions used by default")
     public List<String> extensions = new ArrayList<>();
+    
+    @Option(name = { "--verbose" }, description = "Enables verbose logging")
+    public boolean verbose = false;
 
     public void run() {
+        ConfigurationBuilder<BuiltConfiguration> builder = ConfigurationBuilderFactory.newConfigurationBuilder();
+        builder.setStatusLevel(verbose ? Level.DEBUG : Level.INFO);
+        builder.setConfigurationName("BabyPhotoSorter");
+        AppenderComponentBuilder appenderBuilder = builder.newAppender("Stdout", "CONSOLE").addAttribute("target",
+            ConsoleAppender.Target.SYSTEM_OUT);
+        appenderBuilder.add(builder.newLayout("PatternLayout")
+            .addAttribute("pattern", "%d [%t] %-5level: %msg%n%throwable"));
+        builder.add(appenderBuilder);
+        builder.add(builder.newLogger("org.apache.logging.log4j", Level.DEBUG)
+            .add(builder.newAppenderRef("Stdout")).addAttribute("additivity", false));
+        builder.add(builder.newRootLogger(verbose ? Level.DEBUG : Level.INFO).add(builder.newAppenderRef("Stdout")));
+        LoggerContext ctx = Configurator.initialize(builder.build());
+        ctx.updateLoggers();
+        LOGGER = LoggerFactory.getLogger(BabyPhotoSorter.class);
+
         // Create a configuration
         //@formatter:off
         DateTimeFormatter dateFormat 
@@ -99,10 +132,16 @@ public class BabyPhotoSorter {
                     .appendMonthOfYear(1)
                     .appendLiteral('/')
                     .appendYear(4, 4)
+                    .appendLiteral(' ')
+                    .appendHourOfDay(2)
+                    .appendLiteral(':')
+                    .appendMinuteOfHour(2)
+                    .appendLiteral(':')
+                    .appendSecondOfMinute(2)
+                    .appendTimeZoneOffset("Z", "Z", true, 2, 2)
                     .toFormatter();
         //@formatter:on
-        Instant dob = Instant.parse(this.dob, dateFormat);
-        // TODO Need to set hour/month/day to zero        
+        Instant dob = Instant.parse(this.dob + " 00:00:00Z", dateFormat);
         if (this.extensions.size() == 0) {
             this.extensions.add(".jpg");
             this.extensions.add(".jpeg");
@@ -121,20 +160,23 @@ public class BabyPhotoSorter {
 
             File sourceDir = new File(source);
             if (!sourceDir.isDirectory()) {
-                System.err.println(String.format("Source %s is not a directory", source));
+                LOGGER.error(String.format("Source %s is not a directory", source));
             }
-            System.out.println(String.format("Scanning source directory %s", sourceDir.getAbsolutePath()));
+            LOGGER.info(String.format("Scanning source directory %s", sourceDir.getAbsolutePath()));
 
             for (File f : sourceDir.listFiles(extFilter)) {
                 photos.add(new Photo(f));
             }
         }
+        
+        // Sort files by creation date
+        photos.sort(new CreationDateComparator());
 
         // Next bucket into age brackets
-        Map<String, List<Photo>> ageBrackets = new HashMap<>();
+        Map<String, List<Photo>> ageBrackets = new LinkedHashMap<>();
         for (Photo p : photos) {
             String ageText = p.getAgeText(config);
-            System.out.println(String.format("Photo %s has creation date %s and is in age bracket %s",
+            LOGGER.debug(String.format("Photo %s has creation date %s and is in age bracket %s",
                     p.getFile().getAbsolutePath(), p.creationDate().toString(dateFormat), ageText));
 
             if (!ageBrackets.containsKey(ageText)) {
@@ -142,14 +184,14 @@ public class BabyPhotoSorter {
             }
             ageBrackets.get(ageText).add(p);
         }
-        System.out.println(
+        LOGGER.info(
                 String.format("Sorted %d photos into %d age brackets", photos.size(), ageBrackets.keySet().size()));
         for (String bracket : ageBrackets.keySet()) {
-            System.out.println(
+            LOGGER.info(
                     String.format("Age Bracket %s contains %d photos", bracket, ageBrackets.get(bracket).size()));
         }
 
-        System.out.println(
+        LOGGER.info(
                 String.format("Discovered %d photos in %d source directories", photos.size(), this.sources.size()));
     }
 

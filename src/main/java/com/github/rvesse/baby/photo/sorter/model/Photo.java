@@ -7,12 +7,15 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.attribute.BasicFileAttributes;
 
-import org.joda.time.Days;
+import org.joda.time.Duration;
 import org.joda.time.Instant;
 import org.joda.time.Period;
-import org.joda.time.Weeks;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class Photo {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(Photo.class);
 
     private final File file;
     private final Path path;
@@ -37,6 +40,7 @@ public class Photo {
             loadedCreationDate = true;
             this.creationDate = new Instant(attributes.creationTime().toMillis());
         } catch (IOException e) {
+            LOGGER.warn("Photo {} has invalid creation date", this.file.getAbsolutePath());
             loadedCreationDate = true;
         }
 
@@ -50,62 +54,73 @@ public class Photo {
     public long ageInDays(Configuration config) {
         Instant i = creationDate();
         if (i != null) {
-            Period p = new Period(config.dateOfBirth(), i);
-            try {
-                Days days = p.toStandardDays();
-                return Math.max(days.getDays(), p.getDays());
-            } catch (UnsupportedOperationException e) {
-                return -1;
-            }
+            Duration d = new Duration(config.dateOfBirth(), i);
+            return d.getStandardDays();
         }
-        return -1;
+        return Long.MIN_VALUE;
     }
 
     public long ageInWeeks(Configuration config) {
         Instant i = creationDate();
         if (i != null) {
-            Period p = new Period(config.dateOfBirth(), i);
-            try {
-                Weeks weeks = p.toStandardWeeks();
-                return Math.max(weeks.getWeeks(), p.getWeeks());
-            } catch (UnsupportedOperationException e) {
-                long months = ageInMonths(config);
-                if (months != -1) {
-                    return months * 4;
-                }
+            if (i.isBefore(config.dateOfBirth()))
+                return Long.MIN_VALUE;
+            Duration d = new Duration(config.dateOfBirth(), i);
+            if (d.getStandardDays() < 7) {
+                return 0;
+            } else {
+                return d.getStandardDays() / 7;
             }
         }
-        return -1;
+        return Long.MIN_VALUE;
     }
 
     public long ageInMonths(Configuration config) {
         Instant i = creationDate();
-        return i != null ? new Period(config.dateOfBirth(), i).getMonths() : -1;
+        if (i != null) {
+            if (i.isBefore(config.dateOfBirth()))
+                return Long.MIN_VALUE;
+            Period p = new Period(config.dateOfBirth(), i);
+            if (p.getYears() > 0) {
+                return (p.getYears() * 12) + p.getMonths();
+            } else {
+                return p.getMonths();
+            }
+        }
+        return Long.MIN_VALUE;
     }
 
     public long ageInYears(Configuration config) {
         Instant i = creationDate();
-        return i != null ? new Period(config.dateOfBirth(), i).getYears() : -1;
+        return i != null ? new Period(config.dateOfBirth(), i).getYears() : Long.MIN_VALUE;
     }
 
     public String getAgeText(Configuration config) {
         Instant i = creationDate();
-        if (i.isBefore(config.dateOfBirth()))
-            return "Pregnancy";
+        if (i == null)
+            return "Unknown";
+
+        if (i.isBefore(config.dateOfBirth())) {
+            // Calculate weeks pregnant
+            Period p = new Period(i, config.dateOfBirth());
+            Duration d = p.toDurationFrom(i);
+            return String.format("%d Weeks Pregnant", 39 - (d.getStandardDays() / 7));
+        }
 
         long days = ageInDays(config);
-        if (days != -1 && days / 7 < config.weeksThreshold()) {
+        if (days != Long.MIN_VALUE && days / 7 < config.weeksThreshold()) {
             return String.format("%d Days", days);
         }
         long weeks = ageInWeeks(config);
         long months = ageInMonths(config);
-        if (weeks != -1 && weeks >= config.weeksThreshold() && months < config.monthsThreshold()) {
+        if (weeks != Long.MIN_VALUE && weeks >= config.weeksThreshold() && months < config.monthsThreshold()) {
             return String.format("%d Weeks", weeks);
-        } else if (months != -1 && months >= config.monthsThreshold() && (months / 12) < config.yearsThreshold()) {
+        } else if (months != Long.MIN_VALUE && months >= config.monthsThreshold()
+                && (months / 12) < config.yearsThreshold()) {
             return String.format("%d Months", months);
         }
         long years = ageInYears(config);
-        if (years != -1) {
+        if (years != Long.MIN_VALUE) {
             return String.format("%d Years", years);
         } else {
             return "Unknown";
