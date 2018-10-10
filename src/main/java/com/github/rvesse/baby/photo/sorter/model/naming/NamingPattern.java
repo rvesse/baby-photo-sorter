@@ -23,6 +23,18 @@ public class NamingPattern {
     }
     
     public String getName(Photo photo, Configuration config) {
-        return null;
+        StringBuilder name = new StringBuilder();
+        for (NamePatternElement e : elements) {
+            name.append(e.getText(photo, config));
+        }
+        return name.toString();
+    }
+    
+    public String getPatternText() {
+        StringBuilder patternText = new StringBuilder();
+        for (NamePatternElement e : elements) {
+            patternText.append(e.getPatternText());
+        }
+        return patternText.toString();
     }
 }

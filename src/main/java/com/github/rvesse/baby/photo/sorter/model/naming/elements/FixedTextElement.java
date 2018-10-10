@@ -18,8 +18,7 @@ public class FixedTextElement implements NamePatternElement {
 
     @Override
     public String getPatternText() {
-        // TODO Auto-generated method stub
-        return null;
+        return this.text;
     }
 
 }

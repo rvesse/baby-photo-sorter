@@ -7,14 +7,12 @@ public class AgeElement implements NamePatternElement {
 
     @Override
     public String getText(Photo photo, Configuration config) {
-        // TODO Auto-generated method stub
-        return null;
+        return photo.getAgeText(config);
     }
 
     @Override
     public String getPatternText() {
-        // TODO Auto-generated method stub
-        return null;
+        return "%a";
     }
 
 }

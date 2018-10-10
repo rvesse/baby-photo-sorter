@@ -1,6 +1,11 @@
 package com.github.rvesse.baby.photo.sorter;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.CopyOption;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -30,6 +35,7 @@ import com.github.rvesse.airline.annotations.Parser;
 import com.github.rvesse.airline.annotations.restrictions.AllowedEnumValues;
 import com.github.rvesse.airline.annotations.restrictions.Directory;
 import com.github.rvesse.airline.annotations.restrictions.MutuallyExclusiveWith;
+import com.github.rvesse.airline.annotations.restrictions.NotBlank;
 import com.github.rvesse.airline.annotations.restrictions.Required;
 import com.github.rvesse.airline.annotations.restrictions.ranges.IntegerRange;
 import com.github.rvesse.airline.model.CommandMetadata;
@@ -38,12 +44,14 @@ import com.github.rvesse.baby.photo.sorter.files.CreationDateComparator;
 import com.github.rvesse.baby.photo.sorter.files.ExtensionFilter;
 import com.github.rvesse.baby.photo.sorter.model.Configuration;
 import com.github.rvesse.baby.photo.sorter.model.Photo;
+import com.github.rvesse.baby.photo.sorter.model.naming.NamingPattern;
+import com.github.rvesse.baby.photo.sorter.model.naming.NamingPatternBuilder;
 import com.github.rvesse.baby.photo.sorter.model.naming.NamingScheme;
 
 @Command(name = "baby-photo-sorter", description = "Organises, sorts and renames baby photos based on configurable age brackets")
 @Parser(flagNegationPrefix = "--no-", errorHandler = CollectAll.class)
 public class BabyPhotoSorter {
-    
+
     private static Logger LOGGER;
 
     @SuppressWarnings("unused")
@@ -100,24 +108,33 @@ public class BabyPhotoSorter {
     @Required
     private String dob;
 
+    @Option(name = { "-n",
+            "--name" }, title = "BabyName", description = "Specifies the name of the baby used in renaming the photos")
+    @Required
+    @NotBlank
+    private String name;
+
     @Option(name = { "-e",
             "--extension" }, title = "Extensions", description = "Specifies the file extensions that are treated as photos, if not specified then .jpg and .jpeg are the only file extensions used by default")
     public List<String> extensions = new ArrayList<>();
-    
+
     @Option(name = { "--verbose" }, description = "Enables verbose logging")
     public boolean verbose = false;
+
+    @Option(name = { "--preserve" }, description = "Specifies that original photos should be preserved")
+    public boolean preserveOriginals = false;
 
     public void run() {
         ConfigurationBuilder<BuiltConfiguration> builder = ConfigurationBuilderFactory.newConfigurationBuilder();
         builder.setStatusLevel(verbose ? Level.DEBUG : Level.INFO);
         builder.setConfigurationName("BabyPhotoSorter");
         AppenderComponentBuilder appenderBuilder = builder.newAppender("Stdout", "CONSOLE").addAttribute("target",
-            ConsoleAppender.Target.SYSTEM_OUT);
-        appenderBuilder.add(builder.newLayout("PatternLayout")
-            .addAttribute("pattern", "%d [%t] %-5level: %msg%n%throwable"));
+                ConsoleAppender.Target.SYSTEM_OUT);
+        appenderBuilder
+                .add(builder.newLayout("PatternLayout").addAttribute("pattern", "%d [%t] %-5level: %msg%n%throwable"));
         builder.add(appenderBuilder);
-        builder.add(builder.newLogger("org.apache.logging.log4j", Level.DEBUG)
-            .add(builder.newAppenderRef("Stdout")).addAttribute("additivity", false));
+        builder.add(builder.newLogger("org.apache.logging.log4j", Level.DEBUG).add(builder.newAppenderRef("Stdout"))
+                .addAttribute("additivity", false));
         builder.add(builder.newRootLogger(verbose ? Level.DEBUG : Level.INFO).add(builder.newAppenderRef("Stdout")));
         LoggerContext ctx = Configurator.initialize(builder.build());
         ctx.updateLoggers();
@@ -146,9 +163,15 @@ public class BabyPhotoSorter {
             this.extensions.add(".jpg");
             this.extensions.add(".jpeg");
         }
+        NamingPattern namePattern;
+        if (this.namingPattern != null) {
+            namePattern = NamingPatternBuilder.parse(this.namingPattern);
+        } else {
+            namePattern = this.namingScheme.getPattern();
+        }
         // TODO Support configurable DOB format
-        Configuration config = new Configuration(dob, this.weekThreshold, this.monthThreshold, this.yearThreshold,
-                extensions);
+        Configuration config = new Configuration(dob, this.name, this.weekThreshold, this.monthThreshold,
+                this.yearThreshold, extensions, this.sequencePadding, namePattern);
 
         // Start by discovering photos
         List<Photo> photos = new ArrayList<>();
@@ -168,7 +191,7 @@ public class BabyPhotoSorter {
                 photos.add(new Photo(f));
             }
         }
-        
+
         // Sort files by creation date
         photos.sort(new CreationDateComparator());
 
@@ -176,23 +199,81 @@ public class BabyPhotoSorter {
         Map<String, List<Photo>> ageBrackets = new LinkedHashMap<>();
         for (Photo p : photos) {
             String ageText = p.getAgeText(config);
-            LOGGER.debug(String.format("Photo %s has creation date %s and is in age bracket %s",
-                    p.getFile().getAbsolutePath(), p.creationDate().toString(dateFormat), ageText));
+            if (LOGGER.isDebugEnabled())
+                LOGGER.debug(String.format("Photo %s has creation date %s and is in age bracket %s",
+                        p.getFile().getAbsolutePath(), p.creationDate().toString(dateFormat), ageText));
 
             if (!ageBrackets.containsKey(ageText)) {
                 ageBrackets.put(ageText, new ArrayList<>());
             }
             ageBrackets.get(ageText).add(p);
         }
-        LOGGER.info(
-                String.format("Sorted %d photos into %d age brackets", photos.size(), ageBrackets.keySet().size()));
+        LOGGER.info(String.format("Sorted %d photos into %d age brackets", photos.size(), ageBrackets.keySet().size()));
+
+        // Create directories if appropriate
+        File targetDir = this.target != null ? new File(this.target) : null;
         for (String bracket : ageBrackets.keySet()) {
-            LOGGER.info(
-                    String.format("Age Bracket %s contains %d photos", bracket, ageBrackets.get(bracket).size()));
+            LOGGER.info(String.format("Age Bracket %s contains %d photos", bracket, ageBrackets.get(bracket).size()));
+
+            // Create sequence numbering
+            long id = 0;
+            for (Photo p : ageBrackets.get(bracket)) {
+                p.setSequenceId(++id);
+            }
+
+            // Create the required subfolder
+            if (this.subfolders && targetDir != null) {
+                File bracketDir = new File(targetDir, bracket);
+                if (bracketDir.exists() && bracketDir.isDirectory())
+                    continue;
+                if (!bracketDir.mkdirs()) {
+                    LOGGER.error("Failed to create target directory {}", bracketDir.getAbsolutePath());
+                    System.exit(1);
+                }
+            }
         }
 
-        LOGGER.info(
-                String.format("Discovered %d photos in %d source directories", photos.size(), this.sources.size()));
+        // Reorganise photos
+        for (String bracket : ageBrackets.keySet()) {
+            List<Photo> ps = ageBrackets.get(bracket);
+
+            for (Photo p : ps) {
+                // Have to calculate target directory each time in case we are
+                // organising in-place and have multiple source directories
+                targetDir = this.target != null ? new File(this.target) : p.getFile().getParentFile();
+                if (this.subfolders) {
+                    targetDir = new File(targetDir, bracket);
+                }
+
+                if (LOGGER.isDebugEnabled())
+                    LOGGER.debug("Moving photo {} to folder {} as {}", p.getFile().getAbsolutePath(),
+                            targetDir.getAbsolutePath(), p.getName(config));
+
+                if (false) {
+
+                    // Perform actual move/copy
+                    if (this.preserveOriginals) {
+                        try {
+                            Files.copy(p.getFile().toPath(), new File(targetDir, p.getName(config)).toPath(),
+                                    StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.COPY_ATTRIBUTES);
+                        } catch (IOException e) {
+                            LOGGER.error("Failed to copy photo {} to directory {}", p.getFile().getAbsolutePath(),
+                                    targetDir.getAbsolutePath());
+                        }
+                    } else {
+                        try {
+                            Files.move(p.getFile().toPath(), new File(targetDir, p.getName(config)).toPath(),
+                                    StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.COPY_ATTRIBUTES);
+                        } catch (IOException e) {
+                            LOGGER.error("Failed to move photo {} to directory {}", p.getFile().getAbsolutePath(),
+                                    targetDir.getAbsolutePath());
+                        }
+                    }
+                }
+            }
+        }
+
+        LOGGER.info(String.format("Discovered %d photos in %d source directories", photos.size(), this.sources.size()));
     }
 
 }

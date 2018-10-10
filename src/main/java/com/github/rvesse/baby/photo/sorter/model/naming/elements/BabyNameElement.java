@@ -7,14 +7,12 @@ public class BabyNameElement implements NamePatternElement {
 
     @Override
     public String getText(Photo photo, Configuration config) {
-        // TODO Auto-generated method stub
-        return null;
+        return config.babyName();
     }
 
     @Override
     public String getPatternText() {
-        // TODO Auto-generated method stub
-        return null;
+        return "%n";
     }
 
 }

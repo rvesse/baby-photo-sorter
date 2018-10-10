@@ -21,6 +21,7 @@ public class Photo {
     private final Path path;
     private boolean loadedCreationDate = false;
     private Instant creationDate = null;
+    private long sequenceId = 1;
 
     public Photo(File file) {
         this.file = file;
@@ -125,5 +126,18 @@ public class Photo {
         } else {
             return "Unknown";
         }
+    }
+
+    public String getName(Configuration config) {
+        return config.namingPattern().getName(this, config)
+                + this.file.getName().substring(this.file.getName().lastIndexOf('.'));
+    }
+
+    public long getSequenceId() {
+        return this.sequenceId;
+    }
+
+    public void setSequenceId(long id) {
+        this.sequenceId = id;
     }
 }
