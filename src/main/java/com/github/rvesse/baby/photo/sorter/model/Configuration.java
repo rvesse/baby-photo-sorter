@@ -12,17 +12,19 @@ public class Configuration {
     private final String babyName;
     private final Instant dob;
     private final long weeksThreshold, monthsThreshold, yearsThreshold;
+    private final Events events;
     private final int sequencePadding;
     private final List<String> extensions;
     private final NamingPattern namingPattern;
 
     public Configuration(Instant dob, String name, long weeksThreshold, long monthsThreshold, long yearsThreshold,
-            List<String> extensions, int sequencePadding, NamingPattern namePattern) {
+            Events events, List<String> extensions, int sequencePadding, NamingPattern namePattern) {
         this.dob = dob;
         this.babyName = name;
         this.weeksThreshold = weeksThreshold;
         this.monthsThreshold = monthsThreshold;
         this.yearsThreshold = yearsThreshold;
+        this.events = events;
         this.extensions = extensions;
         this.sequencePadding = sequencePadding;
         this.namingPattern = namePattern;
@@ -47,6 +49,10 @@ public class Configuration {
     public long yearsThreshold() {
         return this.yearsThreshold;
     }
+    
+    public Events events() {
+        return this.events;
+    }
 
     public int sequenceIdPadding() {
         return this.sequencePadding;
@@ -60,7 +66,7 @@ public class Configuration {
 
         return false;
     }
-    
+
     public NamingPattern namingPattern() {
         return this.namingPattern;
     }

@@ -2,9 +2,7 @@ package com.github.rvesse.baby.photo.sorter;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.CopyOption;
 import java.nio.file.Files;
-import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -14,10 +12,8 @@ import java.util.Map;
 import javax.inject.Inject;
 
 import org.apache.logging.log4j.Level;
-import org.apache.logging.log4j.core.Filter;
 import org.apache.logging.log4j.core.LoggerContext;
 import org.apache.logging.log4j.core.appender.ConsoleAppender;
-import org.apache.logging.log4j.core.config.ConfigurationFactory;
 import org.apache.logging.log4j.core.config.Configurator;
 import org.apache.logging.log4j.core.config.builder.api.AppenderComponentBuilder;
 import org.apache.logging.log4j.core.config.builder.api.ConfigurationBuilder;
@@ -43,7 +39,9 @@ import com.github.rvesse.airline.parser.errors.handlers.CollectAll;
 import com.github.rvesse.baby.photo.sorter.files.CreationDateComparator;
 import com.github.rvesse.baby.photo.sorter.files.ExtensionFilter;
 import com.github.rvesse.baby.photo.sorter.model.Configuration;
+import com.github.rvesse.baby.photo.sorter.model.Events;
 import com.github.rvesse.baby.photo.sorter.model.Photo;
+import com.github.rvesse.baby.photo.sorter.model.events.Event;
 import com.github.rvesse.baby.photo.sorter.model.naming.NamingPattern;
 import com.github.rvesse.baby.photo.sorter.model.naming.NamingPatternBuilder;
 import com.github.rvesse.baby.photo.sorter.model.naming.NamingScheme;
@@ -114,17 +112,32 @@ public class BabyPhotoSorter {
     @NotBlank
     private String name;
 
+    @Option(name = {
+            "--events" }, title = "EventsFile", description = "Specifies an events file that defines special events that are used to group photos")
+    @com.github.rvesse.airline.annotations.restrictions.File(mustExist = true, readable = true)
+    private String eventsFile;
+
     @Option(name = { "-e",
             "--extension" }, title = "Extensions", description = "Specifies the file extensions that are treated as photos, if not specified then .jpg and .jpeg are the only file extensions used by default")
-    public List<String> extensions = new ArrayList<>();
+    private List<String> extensions = new ArrayList<>();
 
     @Option(name = { "--verbose" }, description = "Enables verbose logging")
-    public boolean verbose = false;
+    private boolean verbose = false;
 
     @Option(name = { "--preserve" }, description = "Specifies that original photos should be preserved")
-    public boolean preserveOriginals = false;
+    private boolean preserveOriginals = false;
+
+    @Option(name = {
+            "--dry-run" }, description = "Specifies that a dry run should be done i.e. report what would have happened but don't actually do it.  When set also enabled verbose logging i.e. --dry-run implies --verbose")
+    private boolean dryRun = false;
 
     public void run() {
+        // Dry Run implies Verbose
+        if (this.dryRun)
+            this.verbose = true;
+
+        // Set up Log4j
+        // If Verbose set log level to DEBUG
         ConfigurationBuilder<BuiltConfiguration> builder = ConfigurationBuilderFactory.newConfigurationBuilder();
         builder.setStatusLevel(verbose ? Level.DEBUG : Level.INFO);
         builder.setConfigurationName("BabyPhotoSorter");
@@ -169,55 +182,83 @@ public class BabyPhotoSorter {
         } else {
             namePattern = this.namingScheme.getPattern();
         }
+        Events events;
+        if (this.eventsFile != null) {
+            events = Events.parse(new File(this.eventsFile), dateFormat);
+        } else {
+            events = new Events();
+        }
         // TODO Support configurable DOB format
         Configuration config = new Configuration(dob, this.name, this.weekThreshold, this.monthThreshold,
-                this.yearThreshold, extensions, this.sequencePadding, namePattern);
+                this.yearThreshold, events, extensions, this.sequencePadding, namePattern);
 
         // Start by discovering photos
-        List<Photo> photos = new ArrayList<>();
-        ExtensionFilter extFilter = new ExtensionFilter(config);
-        for (String source : this.sources) {
-            if (source == null || source.length() == 0) {
-                continue;
-            }
-
-            File sourceDir = new File(source);
-            if (!sourceDir.isDirectory()) {
-                LOGGER.error(String.format("Source %s is not a directory", source));
-            }
-            LOGGER.info(String.format("Scanning source directory %s", sourceDir.getAbsolutePath()));
-
-            for (File f : sourceDir.listFiles(extFilter)) {
-                photos.add(new Photo(f));
-            }
-        }
+        List<Photo> photos = discoverPhotos(config);
 
         // Sort files by creation date
         photos.sort(new CreationDateComparator());
 
-        // Next bucket into age brackets
-        Map<String, List<Photo>> ageBrackets = new LinkedHashMap<>();
-        for (Photo p : photos) {
-            String ageText = p.getAgeText(config);
-            if (LOGGER.isDebugEnabled())
-                LOGGER.debug(String.format("Photo %s has creation date %s and is in age bracket %s",
-                        p.getFile().getAbsolutePath(), p.creationDate().toString(dateFormat), ageText));
-
-            if (!ageBrackets.containsKey(ageText)) {
-                ageBrackets.put(ageText, new ArrayList<>());
-            }
-            ageBrackets.get(ageText).add(p);
-        }
-        LOGGER.info(String.format("Sorted %d photos into %d age brackets", photos.size(), ageBrackets.keySet().size()));
+        // Next bucket into groups
+        Map<String, List<Photo>> groups = groupPhotos(dateFormat, config, photos);
 
         // Create directories if appropriate
-        File targetDir = this.target != null ? new File(this.target) : null;
+        prepareGroups(groups);
+
+        // Reorganise photos
+        organisePhotos(config, groups);
+
+        LOGGER.info("Discovered {} photos in {} source directories", photos.size(), this.sources.size());
+    }
+
+    private void organisePhotos(Configuration config, Map<String, List<Photo>> ageBrackets) {
         for (String bracket : ageBrackets.keySet()) {
-            LOGGER.info(String.format("Age Bracket %s contains %d photos", bracket, ageBrackets.get(bracket).size()));
+            List<Photo> ps = ageBrackets.get(bracket);
+
+            for (Photo p : ps) {
+                // Have to calculate target directory each time in case we are
+                // organising in-place and have multiple source directories
+                File targetDir = this.target != null ? new File(this.target) : p.getFile().getParentFile();
+                if (this.subfolders) {
+                    targetDir = new File(targetDir, bracket);
+                }
+
+                if (LOGGER.isDebugEnabled())
+                    LOGGER.debug("{} photo {} to folder {} as {}", this.preserveOriginals ? "Copying" : "Moving",
+                            p.getFile().getAbsolutePath(), targetDir.getAbsolutePath(), p.getName(config));
+
+                // Perform actual move/copy
+                if (this.preserveOriginals) {
+                    try {
+                        if (!this.dryRun)
+                            Files.copy(p.getFile().toPath(), new File(targetDir, p.getName(config)).toPath(),
+                                    StandardCopyOption.COPY_ATTRIBUTES);
+                    } catch (IOException e) {
+                        LOGGER.error("Failed to copy photo {} to directory {}", p.getFile().getAbsolutePath(),
+                                targetDir.getAbsolutePath());
+                    }
+                } else {
+                    try {
+                        if (!this.dryRun)
+                            Files.move(p.getFile().toPath(), new File(targetDir, p.getName(config)).toPath(),
+                                    StandardCopyOption.ATOMIC_MOVE);
+                    } catch (IOException e) {
+                        LOGGER.error("Failed to move photo {} to directory {}", p.getFile().getAbsolutePath(),
+                                targetDir.getAbsolutePath());
+                    }
+                }
+            }
+        }
+
+    }
+
+    private void prepareGroups(Map<String, List<Photo>> groups) {
+        File targetDir = this.target != null ? new File(this.target) : null;
+        for (String bracket : groups.keySet()) {
+            LOGGER.info("Group {} contains {} photos", bracket, groups.get(bracket).size());
 
             // Create sequence numbering
             long id = 0;
-            for (Photo p : ageBrackets.get(bracket)) {
+            for (Photo p : groups.get(bracket)) {
                 p.setSequenceId(++id);
             }
 
@@ -232,48 +273,52 @@ public class BabyPhotoSorter {
                 }
             }
         }
+    }
 
-        // Reorganise photos
-        for (String bracket : ageBrackets.keySet()) {
-            List<Photo> ps = ageBrackets.get(bracket);
+    private Map<String, List<Photo>> groupPhotos(DateTimeFormatter dateFormat, Configuration config,
+            List<Photo> photos) {
+        Map<String, List<Photo>> groups = new LinkedHashMap<>();
+        for (Photo p : photos) {
+            String group;
+            Event e = config.events().inEvent(p);
+            if (e != null) {
+                group = e.name();
+            } else {
+                group = p.getAgeText(config);
+            }
 
-            for (Photo p : ps) {
-                // Have to calculate target directory each time in case we are
-                // organising in-place and have multiple source directories
-                targetDir = this.target != null ? new File(this.target) : p.getFile().getParentFile();
-                if (this.subfolders) {
-                    targetDir = new File(targetDir, bracket);
-                }
+            if (LOGGER.isDebugEnabled())
+                LOGGER.debug("Photo {} has creation date {} and is in group {}", p.getFile().getAbsolutePath(),
+                        p.creationDate().toString(dateFormat), group);
 
-                if (LOGGER.isDebugEnabled())
-                    LOGGER.debug("Moving photo {} to folder {} as {}", p.getFile().getAbsolutePath(),
-                            targetDir.getAbsolutePath(), p.getName(config));
+            if (!groups.containsKey(group)) {
+                groups.put(group, new ArrayList<>());
+            }
+            groups.get(group).add(p);
+        }
+        LOGGER.info("Sorted {} photos into {} groups", photos.size(), groups.keySet().size());
+        return groups;
+    }
 
-                if (false) {
+    private List<Photo> discoverPhotos(Configuration config) {
+        List<Photo> photos = new ArrayList<>();
+        ExtensionFilter extFilter = new ExtensionFilter(config);
+        for (String source : this.sources) {
+            if (source == null || source.length() == 0) {
+                continue;
+            }
 
-                    // Perform actual move/copy
-                    if (this.preserveOriginals) {
-                        try {
-                            Files.copy(p.getFile().toPath(), new File(targetDir, p.getName(config)).toPath(),
-                                    StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.COPY_ATTRIBUTES);
-                        } catch (IOException e) {
-                            LOGGER.error("Failed to copy photo {} to directory {}", p.getFile().getAbsolutePath(),
-                                    targetDir.getAbsolutePath());
-                        }
-                    } else {
-                        try {
-                            Files.move(p.getFile().toPath(), new File(targetDir, p.getName(config)).toPath(),
-                                    StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.COPY_ATTRIBUTES);
-                        } catch (IOException e) {
-                            LOGGER.error("Failed to move photo {} to directory {}", p.getFile().getAbsolutePath(),
-                                    targetDir.getAbsolutePath());
-                        }
-                    }
-                }
+            File sourceDir = new File(source);
+            if (!sourceDir.isDirectory()) {
+                LOGGER.error("Source {} is not a directory", source);
+            }
+            LOGGER.info("Scanning source directory {}", sourceDir.getAbsolutePath());
+
+            for (File f : sourceDir.listFiles(extFilter)) {
+                photos.add(new Photo(f));
             }
         }
-
-        LOGGER.info(String.format("Discovered %d photos in %d source directories", photos.size(), this.sources.size()));
+        return photos;
     }
 
 }
