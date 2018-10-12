@@ -14,12 +14,33 @@ public enum NamingScheme {
                         .appendSpace()
                         .appendSequenceId()
                         .build()),
+    NameGroupSequence(new NamingPatternBuilder()
+                        .appendBabyName()
+                        .appendSpace()
+                        .appendGroupName()
+                        .appendSpace()
+                        .appendSequenceId()
+                        .build()),
     AgeNameSequence(new NamingPatternBuilder()
                         .appendBabyAge()
                         .appendSpace()
                         .appendBabyName()
                         .appendSpace()
                         .appendSequenceId()
+                        .build()),
+    GroupNameSequence(new NamingPatternBuilder()
+                        .appendGroupName()
+                        .appendSpace()
+                        .appendBabyName()
+                        .appendSpace()
+                        .appendSequenceId()
+                        .build()),
+    NameGroupDate(new NamingPatternBuilder()
+                        .appendBabyName()
+                        .appendSpace()
+                        .appendGroupName()
+                        .appendSpace()
+                        .appendDate()
                         .build()),
     NameAgeDate(new NamingPatternBuilder()
                     .appendBabyName()

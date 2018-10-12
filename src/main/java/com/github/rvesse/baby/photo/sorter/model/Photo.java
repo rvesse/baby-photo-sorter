@@ -13,6 +13,8 @@ import org.joda.time.Period;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.github.rvesse.baby.photo.sorter.model.events.Event;
+
 public class Photo {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(Photo.class);
@@ -22,6 +24,7 @@ public class Photo {
     private boolean loadedCreationDate = false;
     private Instant creationDate = null;
     private long sequenceId = 1;
+    private Event event = null;
 
     public Photo(File file) {
         this.file = file;
@@ -139,5 +142,13 @@ public class Photo {
 
     public void setSequenceId(long id) {
         this.sequenceId = id;
+    }
+    
+    public Event getEvent() {
+        return this.event;
+    }
+    
+    public void setEvent(Event event) {
+        this.event = event;
     }
 }

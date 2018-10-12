@@ -28,12 +28,14 @@ import org.slf4j.LoggerFactory;
 import com.github.rvesse.airline.annotations.Command;
 import com.github.rvesse.airline.annotations.Option;
 import com.github.rvesse.airline.annotations.Parser;
+import com.github.rvesse.airline.annotations.help.ProseSection;
 import com.github.rvesse.airline.annotations.restrictions.AllowedEnumValues;
 import com.github.rvesse.airline.annotations.restrictions.Directory;
 import com.github.rvesse.airline.annotations.restrictions.MutuallyExclusiveWith;
 import com.github.rvesse.airline.annotations.restrictions.NotBlank;
 import com.github.rvesse.airline.annotations.restrictions.Required;
 import com.github.rvesse.airline.annotations.restrictions.ranges.IntegerRange;
+import com.github.rvesse.airline.help.sections.common.CommonSections;
 import com.github.rvesse.airline.model.CommandMetadata;
 import com.github.rvesse.airline.parser.errors.handlers.CollectAll;
 import com.github.rvesse.baby.photo.sorter.files.CreationDateComparator;
@@ -48,6 +50,30 @@ import com.github.rvesse.baby.photo.sorter.model.naming.NamingScheme;
 
 @Command(name = "baby-photo-sorter", description = "Organises, sorts and renames baby photos based on configurable age brackets")
 @Parser(flagNegationPrefix = "--no-", errorHandler = CollectAll.class)
+//@formatter:off
+@ProseSection(
+    title = "Naming Patterns",
+    paragraphs = {
+        "A naming pattern is a string contained one or more format specifiers that are populated by properties of photos when evaluated.  Any part of the string not recognized as a format specifier is used literally.  The following format specifiers are available:",
+        "%n is used to insert the babys name",
+        "%a is used to insert the babys age as calculated from the photos date and the babys date of birth",
+        "%g is used to insert the photos group name, this is either the name of an event if the photo belongs to a defined event or the name of an age bracket",
+        "%d is used to insert the photos creation date and time",
+        "%s is used to insert the sequence ID of the photo.  This is a numeric sequence identifier for the photo calculated by sorting the photos in each group into date order and then numbering from one.  The sequence ID will be padded with zeros to a defined length to improve lexicographical sorting of photo names in the resulting folders."
+    },
+    suggestedOrder = CommonSections.ORDER_DISCUSSION + 1
+)
+/*@ProseSection(
+    title = "Events File",
+    paragraphs = {
+        "An events file is a simple comma separated text file that contains defined events that you want to use to group photos instead of age brackets.  The format is as follows:",
+        "startDate,endDate,name",
+        "Where startDate and endDate are given as ISO standard dates - i.e. dd/MM/yyyy HH:mm:ssZ - the time portion is considered optional and if not specified will default to 00:00:00Z for the startDate and 23:59:59Z for the endDate",
+        "When grouping photos it will be checked whether"
+    },
+    suggestedOrder = CommonSections.ORDER_DISCUSSION + 2
+)*/
+//@formatter:on
 public class BabyPhotoSorter {
 
     private static Logger LOGGER;
@@ -74,7 +100,7 @@ public class BabyPhotoSorter {
             "--naming-scheme" }, title = "NamingScheme", description = "Specifies the desired photo naming scheme from available defaults, can alternatively use --naming-pattern to specify a custom scheme")
     @MutuallyExclusiveWith(tag = "naming")
     @AllowedEnumValues(NamingScheme.class)
-    private NamingScheme namingScheme = NamingScheme.NameAgeSequence;
+    private NamingScheme namingScheme = NamingScheme.NameGroupSequence;
 
     @Option(name = {
             "--naming-pattern" }, title = "NamingPattern", description = "Specifies a custom photo naming scheme to use, see Naming Patterns for details of available format specifiers.  Alternatively use --naming-scheme to specify one of the default schemes")
@@ -210,27 +236,29 @@ public class BabyPhotoSorter {
         LOGGER.info("Discovered {} photos in {} source directories", photos.size(), this.sources.size());
     }
 
-    private void organisePhotos(Configuration config, Map<String, List<Photo>> ageBrackets) {
-        for (String bracket : ageBrackets.keySet()) {
-            List<Photo> ps = ageBrackets.get(bracket);
+    private void organisePhotos(Configuration config, Map<String, List<Photo>> groups) {
+        for (String groupName : groups.keySet()) {
+            List<Photo> ps = groups.get(groupName);
 
             for (Photo p : ps) {
                 // Have to calculate target directory each time in case we are
                 // organising in-place and have multiple source directories
                 File targetDir = this.target != null ? new File(this.target) : p.getFile().getParentFile();
                 if (this.subfolders) {
-                    targetDir = new File(targetDir, bracket);
+                    targetDir = new File(targetDir, groupName);
                 }
 
+                
+                String newName = p.getName(config);
                 if (LOGGER.isDebugEnabled())
                     LOGGER.debug("{} photo {} to folder {} as {}", this.preserveOriginals ? "Copying" : "Moving",
-                            p.getFile().getAbsolutePath(), targetDir.getAbsolutePath(), p.getName(config));
+                            p.getFile().getAbsolutePath(), targetDir.getAbsolutePath(), newName);
 
                 // Perform actual move/copy
                 if (this.preserveOriginals) {
                     try {
                         if (!this.dryRun)
-                            Files.copy(p.getFile().toPath(), new File(targetDir, p.getName(config)).toPath(),
+                            Files.copy(p.getFile().toPath(), new File(targetDir, newName).toPath(),
                                     StandardCopyOption.COPY_ATTRIBUTES);
                     } catch (IOException e) {
                         LOGGER.error("Failed to copy photo {} to directory {}", p.getFile().getAbsolutePath(),
@@ -239,7 +267,7 @@ public class BabyPhotoSorter {
                 } else {
                     try {
                         if (!this.dryRun)
-                            Files.move(p.getFile().toPath(), new File(targetDir, p.getName(config)).toPath(),
+                            Files.move(p.getFile().toPath(), new File(targetDir, newName).toPath(),
                                     StandardCopyOption.ATOMIC_MOVE);
                     } catch (IOException e) {
                         LOGGER.error("Failed to move photo {} to directory {}", p.getFile().getAbsolutePath(),
@@ -283,6 +311,7 @@ public class BabyPhotoSorter {
             Event e = config.events().inEvent(p);
             if (e != null) {
                 group = e.name();
+                p.setEvent(e);
             } else {
                 group = p.getAgeText(config);
             }

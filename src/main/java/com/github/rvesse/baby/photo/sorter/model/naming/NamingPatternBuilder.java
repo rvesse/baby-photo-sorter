@@ -7,6 +7,7 @@ import com.github.rvesse.baby.photo.sorter.model.naming.elements.AgeElement;
 import com.github.rvesse.baby.photo.sorter.model.naming.elements.BabyNameElement;
 import com.github.rvesse.baby.photo.sorter.model.naming.elements.DateElement;
 import com.github.rvesse.baby.photo.sorter.model.naming.elements.FixedTextElement;
+import com.github.rvesse.baby.photo.sorter.model.naming.elements.GroupElement;
 import com.github.rvesse.baby.photo.sorter.model.naming.elements.NamePatternElement;
 import com.github.rvesse.baby.photo.sorter.model.naming.elements.SequenceElement;
 
@@ -15,13 +16,11 @@ public class NamingPatternBuilder {
     private List<NamePatternElement> elements = new ArrayList<>();
     
     public NamingPatternBuilder appendText(String text) {
-        this.elements.add(new FixedTextElement(text));
-        return this;
+        return appendElement(new FixedTextElement(text));
     }
     
     public NamingPatternBuilder appendText(char text) {
-        this.elements.add(new FixedTextElement(new String(new char[] { text })));
-        return this;
+        return appendElement(new FixedTextElement(new String(new char[] { text })));
     }
     
     public NamingPatternBuilder appendSpace() {
@@ -29,23 +28,23 @@ public class NamingPatternBuilder {
     }
     
     public NamingPatternBuilder appendBabyName() {
-        this.elements.add(new BabyNameElement());
-        return this;
+        return appendElement(new BabyNameElement());
     }
     
     public NamingPatternBuilder appendBabyAge() {
-        this.elements.add(new AgeElement());
-        return this;
+        return appendElement(new AgeElement());
     }
     
     public NamingPatternBuilder appendDate() {
-        this.elements.add(new DateElement());
-        return this;
+        return appendElement(new DateElement());
     }
     
     public NamingPatternBuilder appendSequenceId() {
-        this.elements.add(new SequenceElement());
-        return this;
+        return appendElement(new SequenceElement());
+    }
+    
+    public NamingPatternBuilder appendGroupName() {
+        return appendElement(new GroupElement());
     }
     
     public NamingPatternBuilder appendElement(NamePatternElement element) {
@@ -82,6 +81,9 @@ public class NamingPatternBuilder {
                         break;
                     case 'd':
                         builder.appendDate();
+                        break;
+                    case 'g':
+                        builder.appendGroupName();
                         break;
                     default:
                         temp.append(cs[i]);
