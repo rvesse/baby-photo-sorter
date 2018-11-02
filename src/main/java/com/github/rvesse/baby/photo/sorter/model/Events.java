@@ -28,6 +28,29 @@ public class Events {
     public Events(Collection<Event> events) {
         this.events.addAll(events);
         this.events.sort(new EventComparator());
+
+        // Check and warn on overlapping/conflicting events
+        for (int i = 0; i < this.events.size(); i++) {
+            Event e = this.events.get(i);
+            for (int j = i + 1; j < this.events.size(); j++) {
+                Event other = this.events.get(j);
+
+                if (e.end().isAfter(other.start())) {
+                    if (e.end().isAfter(other.end())) {
+                        LOGGER.warn(
+                                "Event {} contains event {}, as a result no photos will be grouped into event {} because photos will always match event {} which starts first",
+                                e.name(), other.name(), other.name(), e.name());
+                    } else {
+                        LOGGER.warn(
+                                "Event {} overlaps with event {}, please note that photos will be grouped into the first containing event",
+                                e.name(), other.name());
+                    }
+                } else {
+                    // No overlap, so no need for further checks
+                    continue;
+                }
+            }
+        }
     }
 
     /**
@@ -53,7 +76,7 @@ public class Events {
             String line;
             while ((line = reader.readLine()) != null) {
                 String[] parts = line.split(",", 3);
-                
+
                 // Add start and end time if missing
                 if (!parts[0].contains(" ")) {
                     parts[0] += " 00:00:00Z";
@@ -61,7 +84,7 @@ public class Events {
                 if (!parts[1].contains(" ")) {
                     parts[1] += " 23:59:59Z";
                 }
-                
+
                 // Pass the dates and create the event
                 Instant start = Instant.parse(parts[0], formatter);
                 Instant end = Instant.parse(parts[1], formatter);

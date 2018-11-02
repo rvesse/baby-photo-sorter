@@ -105,10 +105,11 @@ public class Photo {
             return "Unknown";
 
         if (i.isBefore(config.dateOfBirth())) {
-            // Calculate weeks pregnant
-            Period p = new Period(i, config.dateOfBirth());
+            long weeksOfPregnancy = config.weeksOfPregnancy();
+            
+            Period p = new Period(i, config.dueDate());
             Duration d = p.toDurationFrom(i);
-            return String.format("%d Weeks Pregnant", 39 - (d.getStandardDays() / 7));
+            return String.format("%d Weeks Pregnant", weeksOfPregnancy - (d.getStandardDays() / 7));
         }
 
         long days = ageInDays(config);

@@ -1,6 +1,7 @@
 package com.github.rvesse.baby.photo.sorter;
 
 import java.io.File;
+import java.io.FilenameFilter;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
@@ -40,6 +41,7 @@ import com.github.rvesse.airline.model.CommandMetadata;
 import com.github.rvesse.airline.parser.errors.handlers.CollectAll;
 import com.github.rvesse.baby.photo.sorter.files.CreationDateComparator;
 import com.github.rvesse.baby.photo.sorter.files.ExtensionFilter;
+import com.github.rvesse.baby.photo.sorter.files.SubdirectoryFilter;
 import com.github.rvesse.baby.photo.sorter.model.Configuration;
 import com.github.rvesse.baby.photo.sorter.model.Events;
 import com.github.rvesse.baby.photo.sorter.model.Photo;
@@ -132,6 +134,10 @@ public class BabyPhotoSorter {
     @Required
     private String dob;
 
+    @Option(name = {
+            "--due-date" }, title = "DueDate", description = "Specifies the due date of the baby, if not specified will be assumed to be the same as the date of birth.  Specifying this separately allows us to more accurately calculate number of weeks pregnant for photos taken prior to the date of birth.")
+    private String dueDate;
+
     @Option(name = { "-n",
             "--name" }, title = "BabyName", description = "Specifies the name of the baby used in renaming the photos")
     @Required
@@ -151,11 +157,17 @@ public class BabyPhotoSorter {
     private boolean verbose = false;
 
     @Option(name = { "--preserve" }, description = "Specifies that original photos should be preserved")
+    @MutuallyExclusiveWith(tag = "preserveOrReorg")
     private boolean preserveOriginals = false;
 
     @Option(name = {
             "--dry-run" }, description = "Specifies that a dry run should be done i.e. report what would have happened but don't actually do it.  When set also enabled verbose logging i.e. --dry-run implies --verbose")
     private boolean dryRun = false;
+
+    @Option(name = {
+            "--reorg" }, description = "Specifies that photos sorted from previous runs should be reorganised, this option only makes sense if --sub-folders is used and causes sub-folders of the target directories (or the source directories if no explicit target directory is given) to be rescanned and reorganised.  This can be useful if you want to change your organisation criteria or have imported new photos that overlap with your previously organised photos.")
+    @MutuallyExclusiveWith(tag = "preserveOrReorg")
+    private boolean reorg = false;
 
     public void run() {
         // Dry Run implies Verbose
@@ -179,6 +191,11 @@ public class BabyPhotoSorter {
         ctx.updateLoggers();
         LOGGER = LoggerFactory.getLogger(BabyPhotoSorter.class);
 
+        if (this.reorg && (!this.subfolders || this.target == null)) {
+            LOGGER.warn(
+                    "Using --reorg is unnecessary when not using --subfolders/--target, source directories will already be rescanned and reorganised");
+        }
+
         // Create a configuration
         //@formatter:off
         DateTimeFormatter dateFormat 
@@ -198,6 +215,7 @@ public class BabyPhotoSorter {
                     .toFormatter();
         //@formatter:on
         Instant dob = Instant.parse(this.dob + " 00:00:00Z", dateFormat);
+        Instant dueDate = this.dueDate != null ? Instant.parse(this.dueDate + " 00:00:00Z", dateFormat) : dob;
         if (this.extensions.size() == 0) {
             this.extensions.add(".jpg");
             this.extensions.add(".jpeg");
@@ -215,7 +233,7 @@ public class BabyPhotoSorter {
             events = new Events();
         }
         // TODO Support configurable DOB format
-        Configuration config = new Configuration(dob, this.name, this.weekThreshold, this.monthThreshold,
+        Configuration config = new Configuration(dob, dueDate, this.name, this.weekThreshold, this.monthThreshold,
                 this.yearThreshold, events, extensions, this.sequencePadding, namePattern);
 
         // Start by discovering photos
@@ -225,10 +243,10 @@ public class BabyPhotoSorter {
         photos.sort(new CreationDateComparator());
 
         // Next bucket into groups
-        Map<String, List<Photo>> groups = groupPhotos(dateFormat, config, photos);
+        Map<String, List<Photo>> groups = groupPhotos(config, dateFormat, photos);
 
         // Create directories if appropriate
-        prepareGroups(groups);
+        prepareGroups(config, groups);
 
         // Reorganise photos
         organisePhotos(config, groups);
@@ -248,7 +266,17 @@ public class BabyPhotoSorter {
                     targetDir = new File(targetDir, groupName);
                 }
 
-                
+                // If not using an explicit target directory we won't have tried
+                // to creat the directory yet because the target directory
+                // depends on the source directory. In this case we need to try
+                // and create the directory here.
+                if (!targetDir.exists() || !targetDir.isDirectory()) {
+                    if (!targetDir.mkdirs()) {
+                        LOGGER.error("Failed to create required target directory {}", targetDir.getAbsolutePath());
+                        System.exit(1);
+                    }
+                }
+
                 String newName = p.getName(config);
                 if (LOGGER.isDebugEnabled())
                     LOGGER.debug("{} photo {} to folder {} as {}", this.preserveOriginals ? "Copying" : "Moving",
@@ -261,8 +289,9 @@ public class BabyPhotoSorter {
                             Files.copy(p.getFile().toPath(), new File(targetDir, newName).toPath(),
                                     StandardCopyOption.COPY_ATTRIBUTES);
                     } catch (IOException e) {
-                        LOGGER.error("Failed to copy photo {} to directory {}", p.getFile().getAbsolutePath(),
-                                targetDir.getAbsolutePath());
+                        LOGGER.error("Failed to copy photo {} to directory {} - {}", p.getFile().getAbsolutePath(),
+                                targetDir.getAbsolutePath(), e.getMessage());
+                        System.exit(1);
                     }
                 } else {
                     try {
@@ -270,8 +299,9 @@ public class BabyPhotoSorter {
                             Files.move(p.getFile().toPath(), new File(targetDir, newName).toPath(),
                                     StandardCopyOption.ATOMIC_MOVE);
                     } catch (IOException e) {
-                        LOGGER.error("Failed to move photo {} to directory {}", p.getFile().getAbsolutePath(),
-                                targetDir.getAbsolutePath());
+                        LOGGER.error("Failed to move photo {} to directory {} - {}", p.getFile().getAbsolutePath(),
+                                targetDir.getAbsolutePath(), e.getMessage());
+                        System.exit(1);
                     }
                 }
             }
@@ -279,20 +309,15 @@ public class BabyPhotoSorter {
 
     }
 
-    private void prepareGroups(Map<String, List<Photo>> groups) {
+    private void prepareGroups(Configuration config, Map<String, List<Photo>> groups) {
         File targetDir = this.target != null ? new File(this.target) : null;
         for (String bracket : groups.keySet()) {
             LOGGER.info("Group {} contains {} photos", bracket, groups.get(bracket).size());
 
-            // Create sequence numbering
-            long id = 0;
-            for (Photo p : groups.get(bracket)) {
-                p.setSequenceId(++id);
-            }
-
             // Create the required subfolder
+            File bracketDir = null;
             if (this.subfolders && targetDir != null) {
-                File bracketDir = new File(targetDir, bracket);
+                bracketDir = new File(targetDir, bracket);
                 if (bracketDir.exists() && bracketDir.isDirectory())
                     continue;
                 if (!bracketDir.mkdirs()) {
@@ -300,10 +325,24 @@ public class BabyPhotoSorter {
                     System.exit(1);
                 }
             }
+
+            // Create sequence numbering
+            long id = 0;
+            // Determine the initial sequence number based on existing organised
+            // photos unless we're reorganising
+            if (bracketDir != null && !this.reorg) {
+                id += bracketDir.list(new ExtensionFilter(config)).length;
+                if (id > 0)
+                    LOGGER.debug("Target directory {} already has {} photos sorted into it", bracketDir, id);
+            }
+            for (Photo p : groups.get(bracket)) {
+                p.setSequenceId(++id);
+            }
+
         }
     }
 
-    private Map<String, List<Photo>> groupPhotos(DateTimeFormatter dateFormat, Configuration config,
+    private Map<String, List<Photo>> groupPhotos(Configuration config, DateTimeFormatter dateFormat,
             List<Photo> photos) {
         Map<String, List<Photo>> groups = new LinkedHashMap<>();
         for (Photo p : photos) {
@@ -343,11 +382,60 @@ public class BabyPhotoSorter {
             }
             LOGGER.info("Scanning source directory {}", sourceDir.getAbsolutePath());
 
-            for (File f : sourceDir.listFiles(extFilter)) {
-                photos.add(new Photo(f));
+            int found = scanDirectory(sourceDir, extFilter, photos);
+            if (LOGGER.isDebugEnabled()) {
+                LOGGER.debug("Source directory {} contained {} photos", sourceDir.getAbsolutePath(), found);
+            }
+
+            // If reorganising and no explicit target also scan sub-directories
+            // of the source directory (if using subfolders)
+            if (this.reorg && this.target == null && this.subfolders) {
+                for (File subdir : sourceDir.listFiles(new SubdirectoryFilter())) {
+                    LOGGER.info("Scanning source sub-directory {} for reorganisation", subdir.getAbsolutePath());
+                    found = scanDirectory(subdir, extFilter, photos);
+                    if (LOGGER.isDebugEnabled()) {
+                        LOGGER.debug("Source sub-directory {} contained {} photos", subdir.getAbsolutePath(), found);
+                    }
+                }
+
             }
         }
+
+        // When reorganising scan the target directory (if it exists) and any
+        // sub-directories thereof
+        if (this.reorg && this.target != null) {
+            File targetDir = new File(this.target);
+
+            if (targetDir.exists() && targetDir.isDirectory()) {
+                LOGGER.info("Scanning target directory {} for reorganisation", targetDir.getAbsolutePath());
+                int found = scanDirectory(targetDir, extFilter, photos);
+                if (LOGGER.isDebugEnabled()) {
+                    LOGGER.debug("Target directory {} contained {} photos", targetDir.getAbsolutePath(), found);
+                }
+
+                if (this.subfolders) {
+                    for (File subdir : targetDir.listFiles(new SubdirectoryFilter())) {
+                        LOGGER.info("Scanning target sub-directory {} for reorganisation", subdir.getAbsolutePath());
+                        found = scanDirectory(subdir, extFilter, photos);
+                        if (LOGGER.isDebugEnabled()) {
+                            LOGGER.debug("Target sub-directory {} contained {} photos", subdir.getAbsolutePath(),
+                                    found);
+                        }
+                    }
+                }
+            }
+        }
+
         return photos;
+    }
+
+    private int scanDirectory(File sourceDir, FilenameFilter filter, List<Photo> photos) {
+        int found = 0;
+        for (File f : sourceDir.listFiles(filter)) {
+            photos.add(new Photo(f));
+            found++;
+        }
+        return found;
     }
 
 }
