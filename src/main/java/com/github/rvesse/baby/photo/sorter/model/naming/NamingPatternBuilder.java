@@ -86,6 +86,9 @@ public class NamingPatternBuilder {
                         builder.appendGroupName();
                         break;
                     default:
+                        // Not a format specifier
+                        // Append literal % and then the subsequent character
+                        temp.append('%');
                         temp.append(cs[i]);
                         break;
                     }

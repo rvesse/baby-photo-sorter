@@ -1,15 +1,29 @@
 package com.github.rvesse.baby.photo.sorter.model;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.security.DigestInputStream;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 
+import org.apache.commons.codec.digest.DigestUtils;
+import org.apache.commons.imaging.ImageReadException;
+import org.apache.commons.imaging.Imaging;
+import org.apache.commons.imaging.common.ImageMetadata;
+import org.apache.commons.imaging.formats.jpeg.JpegImageMetadata;
+import org.apache.commons.imaging.formats.tiff.TiffField;
+import org.apache.commons.imaging.formats.tiff.TiffImageMetadata;
+import org.apache.commons.imaging.formats.tiff.constants.ExifTagConstants;
 import org.joda.time.Duration;
 import org.joda.time.Instant;
 import org.joda.time.Period;
+import org.joda.time.format.DateTimeFormatter;
+import org.joda.time.format.DateTimeFormatterBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -19,12 +33,30 @@ public class Photo {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(Photo.class);
 
+    //@formatter:off
+    private static final DateTimeFormatter EXIF_DATE_FORMAT 
+        = new DateTimeFormatterBuilder()
+                .appendYear(4, 4)
+                .appendLiteral(':')
+                .appendMonthOfYear(2)
+                .appendLiteral(':')
+                .appendDayOfMonth(2)
+                .appendLiteral(' ')
+                .appendHourOfDay(2)
+                .appendLiteral(':')
+                .appendMinuteOfHour(2)
+                .appendLiteral(':')
+                .appendSecondOfMinute(2)
+                .toFormatter();
+    //@formatter:on
+
     private final File file;
     private final Path path;
-    private boolean loadedCreationDate = false;
+    private boolean loadedCreationDate = false, loadedHash = false;
     private Instant creationDate = null;
     private long sequenceId = 1;
     private Event event = null;
+    private String hash;
 
     public Photo(File file) {
         this.file = file;
@@ -35,20 +67,115 @@ public class Photo {
         return this.file;
     }
 
+    /**
+     * Gets the creation date for the photo
+     * <p>
+     * Calculated at first request by trying to read the EXIF metadata present
+     * in the file (if any)
+     * </p>
+     * 
+     * @return
+     */
     public synchronized Instant creationDate() {
         if (loadedCreationDate)
             return creationDate;
 
         try {
+            try {
+                ImageMetadata imageMeta = Imaging.getMetadata(this.file);
+
+                if (imageMeta instanceof JpegImageMetadata) {
+                    // JPEG Images
+                    JpegImageMetadata jpegMeta = (JpegImageMetadata) imageMeta;
+                    TiffField dtOriginal = jpegMeta
+                            .findEXIFValueWithExactMatch(ExifTagConstants.EXIF_TAG_DATE_TIME_ORIGINAL);
+                    setCreationDateFromExif(dtOriginal);
+                    if (this.loadedCreationDate)
+                        return this.creationDate;
+
+                    TiffField dtDigitized = jpegMeta
+                            .findEXIFValueWithExactMatch(ExifTagConstants.EXIF_TAG_DATE_TIME_DIGITIZED);
+                    setCreationDateFromExif(dtDigitized);
+                    if (this.loadedCreationDate)
+                        return this.creationDate;
+                } else if (imageMeta instanceof TiffImageMetadata) {
+                    // TIFF Images
+                    TiffImageMetadata tiffMeta = (TiffImageMetadata) imageMeta;
+                    TiffField dtOriginal = tiffMeta.findField(ExifTagConstants.EXIF_TAG_DATE_TIME_ORIGINAL, true);
+                    setCreationDateFromExif(dtOriginal);
+                    if (this.loadedCreationDate)
+                        return this.creationDate;
+
+                    TiffField dtDigitized = tiffMeta.findField(ExifTagConstants.EXIF_TAG_DATE_TIME_DIGITIZED, true);
+                    setCreationDateFromExif(dtDigitized);
+                    if (this.loadedCreationDate)
+                        return this.creationDate;
+                }
+                if (LOGGER.isDebugEnabled()) {
+                    LOGGER.debug("EXIF medata for photo {} did not contain a creation/digitization date",
+                            this.file.getAbsolutePath());
+                }
+            } catch (ImageReadException e) {
+                // Ignore and fallback to using file attributes
+                LOGGER.debug("Failed to obtain EXIF metadata for photo {}", this.file.getAbsolutePath());
+            }
+
+            // Fall back to file attributes
             BasicFileAttributes attributes = Files.readAttributes(this.path, BasicFileAttributes.class);
             loadedCreationDate = true;
             this.creationDate = new Instant(attributes.creationTime().toMillis());
+            if (LOGGER.isDebugEnabled()) {
+                LOGGER.debug("Obtained file system creation date for photo {} as {}", this.file.getAbsolutePath(),
+                        this.creationDate.toString());
+            }
         } catch (IOException e) {
             LOGGER.warn("Photo {} has invalid creation date", this.file.getAbsolutePath());
             loadedCreationDate = true;
         }
 
         return this.creationDate;
+    }
+
+    private void setCreationDateFromExif(TiffField field) throws ImageReadException {
+        if (field != null) {
+            if (LOGGER.isDebugEnabled()) {
+                LOGGER.debug("Obtained EXIF metadata creation date for photo {} as {} from tag {}",
+                        this.file.getAbsolutePath(), field.getStringValue(), field.getTagName());
+            }
+            try {
+                this.creationDate = Instant.parse(field.getStringValue(), EXIF_DATE_FORMAT);
+                this.loadedCreationDate = true;
+            } catch (IllegalArgumentException e) {
+                LOGGER.debug("Failed to parse EXIF metadata date for photo {}", this.file.getAbsolutePath());
+            }
+        }
+    }
+
+    /**
+     * Gets the file hash for the photo
+     * <p>
+     * Will be calculated at first request, after that a cached hash will be
+     * returned. This obviously assumes that nothing modifies the files contents
+     * in the meantime.
+     * </p>
+     * 
+     * @return
+     */
+    public synchronized String fileHash() {
+        if (this.loadedHash)
+            return this.hash;
+
+        MessageDigest sha512 = DigestUtils.getSha512Digest();
+        DigestUtils digest = new DigestUtils(sha512);
+        try {
+            this.hash = digest.digestAsHex(this.file);
+        } catch (IOException e) {
+            LOGGER.warn("Failed to calculate hash for photo {} - {}", this.file.getAbsolutePath(), e.getMessage());
+            this.hash = null;
+        }
+
+        this.loadedHash = true;
+        return this.hash;
     }
 
     public boolean hasValidCreationDate() {
@@ -106,7 +233,7 @@ public class Photo {
 
         if (i.isBefore(config.dateOfBirth())) {
             long weeksOfPregnancy = config.weeksOfPregnancy();
-            
+
             Period p = new Period(i, config.dueDate());
             Duration d = p.toDurationFrom(i);
             return String.format("%d Weeks Pregnant", weeksOfPregnancy - (d.getStandardDays() / 7));
@@ -144,11 +271,11 @@ public class Photo {
     public void setSequenceId(long id) {
         this.sequenceId = id;
     }
-    
+
     public Event getEvent() {
         return this.event;
     }
-    
+
     public void setEvent(Event event) {
         this.event = event;
     }
