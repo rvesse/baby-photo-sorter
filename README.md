@@ -2,7 +2,15 @@
 
 If you've become a parent in the past few years you've likely amassed a huge collection of digital photos and videos of your kids.  Depending on how organised you are these may just all be dumped in one big folder and difficult to find specific things.  `baby-photo-sorter` helps automatically organise your baby photos, calculating your child's age for each photo, grouping, organising and renaming photos into appropriate sub-folders.
 
-For example:
+To use this tool you will first need to build it:
+
+```
+> mvn package
+```
+
+This will require a recent Apache Maven 3 release and JDK 8 or above (note this hasn't been explicitly tested with later JDK versions)
+
+Then you can organise your photos, for example:
 
 ```
 > ./baby-photo-sorter --name "John Smith" \
@@ -109,3 +117,13 @@ If you want to allow deletes by default you have to explicitly provide the `--al
 ## Dry Run
 
 If you want to see what the tool will do prior to actually running it on your precious photos then you should use the `--dry-run` option.  This will enable verbose log output (also separately available via the `--verbose` option) and won't actually perform any mutative file system options i.e. it calculates what the tool would do without actually doing it.
+
+# License
+
+This software is licensed under the Apache Software License 2.0
+
+# Disclaimer
+
+Any tool that mutates the state of the file system should be used with caution.  We strongly advise taking advantage of the options that preview this tools effects e.g. `--dry-run` prior to running it for real.
+
+You can also use other options like `--preserve` to only copy files, used in conjunction with the `-t`/`--target` option you can create a copy of your photos with your organisation criteria applied and examine the results to ensure you are happy with the output of this tool.
