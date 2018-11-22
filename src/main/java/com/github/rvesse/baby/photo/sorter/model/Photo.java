@@ -1,16 +1,12 @@
 package com.github.rvesse.baby.photo.sorter.model;
 
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.security.DigestInputStream;
 import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-
 import org.apache.commons.codec.digest.DigestUtils;
 import org.apache.commons.imaging.ImageReadException;
 import org.apache.commons.imaging.Imaging;
@@ -51,6 +47,7 @@ public class Photo {
     //@formatter:on
 
     private final File file;
+    private File sourceDirectory;
     private final Path path;
     private boolean loadedCreationDate = false, loadedHash = false;
     private Instant creationDate = null;
@@ -65,6 +62,14 @@ public class Photo {
 
     public File getFile() {
         return this.file;
+    }
+    
+    public File getSourceDirectory() {
+        return this.sourceDirectory != null ? this.sourceDirectory : this.file.getParentFile();
+    }
+    
+    public void setSourceDirectory(File source) {
+        this.sourceDirectory = source;
     }
 
     /**

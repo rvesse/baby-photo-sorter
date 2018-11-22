@@ -17,6 +17,7 @@ import java.util.Set;
 
 import javax.inject.Inject;
 
+import org.apache.commons.lang3.StringUtils;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.core.LoggerContext;
 import org.apache.logging.log4j.core.appender.ConsoleAppender;
@@ -187,9 +188,14 @@ public class BabyPhotoSorter {
     @Option(name = {
             "--keep-duplicates" }, description = "Specifies that duplicate photos should be kept, this only has an effect when --de-duplicate is used.")
     private boolean keepDuplicates = false;
-    
-    @Option(name = { "--allow-deletes" }, description = "Specifies that deletion of duplicate photos should be permitted, this only has an effect when --de-duplicate is used.")
+
+    @Option(name = {
+            "--allow-deletes" }, description = "Specifies that deletion of duplicate photos should be permitted, this only has an effect when --de-duplicate or --clean-empty-dirs is used.")
     private boolean allowDeletes = false;
+
+    @Option(name = {
+            "--clean-empty-dirs" }, description = "Specifies that any resulting empty directories after organisation should be deleted")
+    private boolean cleanEmptyDirs = false;
 
     public void run() {
         // Dry Run implies Verbose
@@ -285,6 +291,75 @@ public class BabyPhotoSorter {
         organisePhotos(config, groups);
 
         LOGGER.info("Discovered {} photos in {} source directories", photos.size(), this.sources.size());
+
+        if (this.cleanEmptyDirs) {
+            LOGGER.info("Looking for empty directories to clean up...");
+
+            int cleaned = cleanEmptyDirectories(config, ignoredDirs);
+
+            LOGGER.info("Cleaned {} empty directories", cleaned);
+        }
+    }
+
+    private int cleanEmptyDirectories(Configuration config, Collection<String> ignoredDirs) {
+        int cleaned = 0;
+        
+        for (String source : this.sources) {
+            if (source == null || source.length() == 0) {
+                continue;
+            }
+
+            File sourceDir = new File(source);
+            if (!sourceDir.isDirectory()) {
+                LOGGER.error("Source {} is not a directory", source);
+            }
+            if (ignoredDirs.contains(sourceDir.getAbsolutePath())) {
+                LOGGER.warn("Ignoring directory {} as requested", sourceDir.getAbsolutePath());
+                continue;
+            }
+            
+            LOGGER.info("Looking for empty directories in source directory {}", sourceDir.getAbsolutePath());
+            
+            for (File subDir : sourceDir.listFiles(new SubdirectoryFilter())) {
+                cleaned += cleanEmptyDirectories(subDir, ignoredDirs);
+            }
+        }
+        
+        // TODO Clean target directories
+        
+        return cleaned;
+    }
+
+    private int cleanEmptyDirectories(File dir, Collection<String> ignoredDirs) {
+        if (ignoredDirs.contains(dir.getAbsolutePath()))
+            return 0;
+
+        int files = dir.listFiles().length;
+        if (files == 0) {
+            LOGGER.info("Removing empty directory {}", dir.getAbsolutePath());
+            if (!this.dryRun) {
+                // TODO Error Handling and Delete Confirmation
+                if (!this.allowDeletes) {
+                    confirmDeletions("empty directories");
+                }
+                if (!dir.delete()) {
+                    LOGGER.warn("Failed to delete empty directory {}", dir.getAbsolutePath());
+                }
+            }
+            return 1;
+        }
+        
+        int cleaned = 0;
+        for (File subDir : dir.listFiles(new SubdirectoryFilter())) {
+            cleaned += cleanEmptyDirectories(subDir, ignoredDirs);
+        }
+        
+        if (cleaned > 0) {
+            // If we've cleaned some sub-directories then may be able to clean ourselves now
+            return cleaned + cleanEmptyDirectories(dir, ignoredDirs);
+        }
+        
+        return cleaned;
     }
 
     private void organisePhotos(Configuration config, Map<String, List<Photo>> groups) {
@@ -294,7 +369,7 @@ public class BabyPhotoSorter {
             for (Photo p : ps) {
                 // Have to calculate target directory each time in case we are
                 // organising in-place and have multiple source directories
-                File targetDir = this.target != null ? new File(this.target) : p.getFile().getParentFile();
+                File targetDir = this.target != null ? new File(this.target) : p.getSourceDirectory();
                 if (this.subfolders) {
                     targetDir = new File(targetDir, groupName);
                 }
@@ -315,6 +390,18 @@ public class BabyPhotoSorter {
                 }
 
                 String newName = p.getName(config);
+
+                // Check whether there is actually anything to do
+                if (StringUtils.equals(p.getFile().getParentFile().getAbsolutePath(), targetDir.getAbsolutePath())) {
+                    // Source and Target Directory are the same
+                    if (StringUtils.equals(p.getFile().getName(), newName)) {
+                        if (LOGGER.isDebugEnabled()) {
+                            LOGGER.debug("Photo {} is already sorted into the correct location",
+                                    p.getFile().getAbsolutePath());
+                        }
+                    }
+                }
+
                 if (LOGGER.isDebugEnabled())
                     LOGGER.debug("{} photo {} to folder {} as {}", this.preserveOriginals ? "Copying" : "Moving",
                             p.getFile().getAbsolutePath(), targetDir.getAbsolutePath(), newName);
@@ -388,6 +475,7 @@ public class BabyPhotoSorter {
         for (Entry<String, List<Photo>> group : groups.entrySet()) {
             Map<String, List<Photo>> photosByHash = new HashMap<>();
 
+            LOGGER.debug("Checking for duplicates in group {}", group.getKey());
             for (Photo p : group.getValue()) {
                 String hash = p.fileHash();
                 if (!photosByHash.containsKey(hash)) {
@@ -416,21 +504,7 @@ public class BabyPhotoSorter {
                             Photo toDelete = ps.get(1);
 
                             if (!this.allowDeletes) {
-                                System.out.print("Are you sure you wish to delete duplicate photos? [y/n]: ");
-                                try {
-                                    int deletePromptResponse = System.in.read();
-                                    switch (deletePromptResponse) {
-                                    case 'Y':
-                                    case 'y':
-                                        this.allowDeletes = true;
-                                        break;
-                                    default:
-                                        LOGGER.warn("User refused to allow deletion of duplicate photos, sorting aborted!");
-                                        System.exit(1);
-                                    }
-                                } catch (IOException e) {
-                                    LOGGER.error("Bad response to user prompt - {}", e.getMessage());
-                                }
+                                confirmDeletions("duplicate photos");
                             }
 
                             if (!toDelete.getFile().delete()) {
@@ -442,7 +516,28 @@ public class BabyPhotoSorter {
                         }
                     }
                 }
+            } else {
+                LOGGER.debug("No duplicates found in group {}", group.getKey());
             }
+        }
+    }
+
+    private void confirmDeletions(String items) {
+        System.out.print(String.format("Are you sure you wish to delete %s? [y/n]: ", items));
+        try {
+            int deletePromptResponse = System.in.read();
+            switch (deletePromptResponse) {
+            case 'Y':
+            case 'y':
+                this.allowDeletes = true;
+                break;
+            default:
+                LOGGER.warn(
+                        "User refused to allow deletion of {}, sorting aborted!", items);
+                System.exit(1);
+            }
+        } catch (IOException e) {
+            LOGGER.error("Bad response to delete confirmation prompt - {}", e.getMessage());
         }
     }
 
@@ -491,27 +586,15 @@ public class BabyPhotoSorter {
 
             LOGGER.info("Scanning source directory {}", sourceDir.getAbsolutePath());
 
-            int found = scanDirectory(sourceDir, extFilter, photos);
+            int found = scanDirectory(sourceDir, extFilter, photos, sourceDir);
             if (LOGGER.isDebugEnabled()) {
                 LOGGER.debug("Source directory {} contained {} photos", sourceDir.getAbsolutePath(), found);
             }
 
             // If reorganising and no explicit target also scan sub-directories
-            // of the source directory (if using subfolders)
+            // of the source directory (if using sub-folders)
             if (this.reorg && this.target == null && this.subfolders) {
-                for (File subdir : sourceDir.listFiles(new SubdirectoryFilter())) {
-                    if (ignoredDirs.contains(subdir.getAbsolutePath())) {
-                        LOGGER.warn("Ignoring sub-directory {} as requested", subdir.getAbsolutePath());
-                        continue;
-                    }
-
-                    LOGGER.info("Scanning source sub-directory {} for reorganisation", subdir.getAbsolutePath());
-                    found = scanDirectory(subdir, extFilter, photos);
-                    if (LOGGER.isDebugEnabled()) {
-                        LOGGER.debug("Source sub-directory {} contained {} photos", subdir.getAbsolutePath(), found);
-                    }
-                }
-
+                found += scanSubDirectories(ignoredDirs, photos, extFilter, sourceDir, false, sourceDir);
             }
         }
 
@@ -526,28 +609,13 @@ public class BabyPhotoSorter {
             } else {
                 if (targetDir.exists() && targetDir.isDirectory()) {
                     LOGGER.info("Scanning target directory {} for reorganisation", targetDir.getAbsolutePath());
-                    int found = scanDirectory(targetDir, extFilter, photos);
+                    int found = scanDirectory(targetDir, extFilter, photos, targetDir);
                     if (LOGGER.isDebugEnabled()) {
                         LOGGER.debug("Target directory {} contained {} photos", targetDir.getAbsolutePath(), found);
                     }
 
                     if (this.subfolders) {
-                        for (File subdir : targetDir.listFiles(new SubdirectoryFilter())) {
-                            if (ignoredDirs.contains(subdir.getAbsolutePath())) {
-                                LOGGER.warn(
-                                        "Ignoring target sub-directory {} as requested, reorganisation may be ineffectual as a result",
-                                        subdir.getAbsolutePath());
-                                continue;
-                            }
-
-                            LOGGER.info("Scanning target sub-directory {} for reorganisation",
-                                    subdir.getAbsolutePath());
-                            found = scanDirectory(subdir, extFilter, photos);
-                            if (LOGGER.isDebugEnabled()) {
-                                LOGGER.debug("Target sub-directory {} contained {} photos", subdir.getAbsolutePath(),
-                                        found);
-                            }
-                        }
+                        found += scanSubDirectories(ignoredDirs, photos, extFilter, targetDir, true, targetDir);
                     }
                 }
             }
@@ -556,10 +624,38 @@ public class BabyPhotoSorter {
         return photos;
     }
 
-    private int scanDirectory(File sourceDir, FilenameFilter filter, List<Photo> photos) {
+    private int scanSubDirectories(Collection<String> ignoredDirs, List<Photo> photos, ExtensionFilter extFilter,
+            File sourceDir, boolean wasTargetDir, File originalSourceDirectory) {
+        int found = 0;
+        for (File subdir : sourceDir.listFiles(new SubdirectoryFilter())) {
+            if (ignoredDirs.contains(subdir.getAbsolutePath())) {
+                if (wasTargetDir) {
+                    LOGGER.warn(
+                            "Ignoring target sub-directory {} as requested, reorganisation may be ineffectual as a result",
+                            subdir.getAbsolutePath());
+                } else {
+                    LOGGER.warn("Ignoring sub-directory {} as requested", subdir.getAbsolutePath());
+                }
+                continue;
+            }
+
+            LOGGER.info("Scanning sub-directory {} for reorganisation", subdir.getAbsolutePath());
+            found += scanDirectory(subdir, extFilter, photos, originalSourceDirectory);
+            if (LOGGER.isDebugEnabled()) {
+                LOGGER.debug("Sub-directory {} contained {} photos", subdir.getAbsolutePath(), found);
+            }
+
+            found += scanSubDirectories(ignoredDirs, photos, extFilter, subdir, wasTargetDir, originalSourceDirectory);
+        }
+        return found;
+    }
+
+    private int scanDirectory(File sourceDir, FilenameFilter filter, List<Photo> photos, File originalSourceDirectory) {
         int found = 0;
         for (File f : sourceDir.listFiles(filter)) {
-            photos.add(new Photo(f));
+            Photo p = new Photo(f);
+            p.setSourceDirectory(originalSourceDirectory);
+            photos.add(p);
             found++;
         }
         return found;
