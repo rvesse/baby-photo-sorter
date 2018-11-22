@@ -86,6 +86,9 @@ import com.github.rvesse.baby.photo.sorter.model.naming.NamingScheme;
 public class BabyPhotoSorter {
 
     private static Logger LOGGER;
+    
+    private static final String MAC_THUMBS_FILE = ".DS_Store";
+    private static final String WINDOWS_THUMBS_FILE = "Thumbs.db";
 
     @SuppressWarnings("unused")
     @Inject
@@ -304,6 +307,7 @@ public class BabyPhotoSorter {
     private int cleanEmptyDirectories(Configuration config, Collection<String> ignoredDirs) {
         int cleaned = 0;
         
+        SubdirectoryFilter subdirFilter = new SubdirectoryFilter();
         for (String source : this.sources) {
             if (source == null || source.length() == 0) {
                 continue;
@@ -311,7 +315,7 @@ public class BabyPhotoSorter {
 
             File sourceDir = new File(source);
             if (!sourceDir.isDirectory()) {
-                LOGGER.error("Source {} is not a directory", source);
+                LOGGER.error("Source {} is not a directory", sourceDir.getAbsolutePath());
             }
             if (ignoredDirs.contains(sourceDir.getAbsolutePath())) {
                 LOGGER.warn("Ignoring directory {} as requested", sourceDir.getAbsolutePath());
@@ -320,12 +324,29 @@ public class BabyPhotoSorter {
             
             LOGGER.info("Looking for empty directories in source directory {}", sourceDir.getAbsolutePath());
             
-            for (File subDir : sourceDir.listFiles(new SubdirectoryFilter())) {
+            // Clean any sub-directories found
+            for (File subDir : sourceDir.listFiles(subdirFilter)) {
                 cleaned += cleanEmptyDirectories(subDir, ignoredDirs);
             }
         }
         
-        // TODO Clean target directories
+        // Clean target directories if using them
+        if (this.target != null) {
+            File targetDir = new File(target);
+            if (!targetDir.isDirectory()) {
+                LOGGER.error("Target {} is not a directory", targetDir.getAbsolutePath());
+                return cleaned;
+            }
+            if (ignoredDirs.contains(targetDir.getAbsolutePath())) {
+                LOGGER.warn("Ignoring target directory {} as requested", targetDir.getAbsolutePath());
+                return cleaned;
+            }
+            
+            // Clean any sub-directories found
+            for (File subDir : targetDir.listFiles(subdirFilter)) {
+                cleaned += cleanEmptyDirectories(subDir, ignoredDirs);
+            }
+        }
         
         return cleaned;
     }
@@ -338,15 +359,32 @@ public class BabyPhotoSorter {
         if (files == 0) {
             LOGGER.info("Removing empty directory {}", dir.getAbsolutePath());
             if (!this.dryRun) {
-                // TODO Error Handling and Delete Confirmation
                 if (!this.allowDeletes) {
                     confirmDeletions("empty directories");
                 }
                 if (!dir.delete()) {
                     LOGGER.warn("Failed to delete empty directory {}", dir.getAbsolutePath());
                 }
+                LOGGER.info("Deleted empty directory {}", dir.getAbsolutePath());
             }
             return 1;
+        } else if (files == 1) {
+            // Is is just the system Thumbnail database file present?
+            // If so clean that up and then delete the directory as well
+            File maybeThumbsFile = dir.listFiles()[0];
+            if (StringUtils.equals(maybeThumbsFile.getName(), MAC_THUMBS_FILE) || StringUtils.equals(maybeThumbsFile.getName(), WINDOWS_THUMBS_FILE)) {
+                LOGGER.info("Removing empty directory {}", dir.getAbsolutePath());
+                if (!this.dryRun) {
+                    if (!this.allowDeletes) {
+                        confirmDeletions("empty directories");
+                    }
+                    if (!maybeThumbsFile.delete() && !dir.delete()) {
+                        LOGGER.warn("Failed to delete empty directory {}", dir.getAbsolutePath());
+                    }
+                    LOGGER.info("Deleted empty directory {}", dir.getAbsolutePath());
+                }
+                return 1;
+            }
         }
         
         int cleaned = 0;
@@ -354,7 +392,7 @@ public class BabyPhotoSorter {
             cleaned += cleanEmptyDirectories(subDir, ignoredDirs);
         }
         
-        if (cleaned > 0) {
+        if (cleaned > 0 && dir.exists() && !this.dryRun) {
             // If we've cleaned some sub-directories then may be able to clean ourselves now
             return cleaned + cleanEmptyDirectories(dir, ignoredDirs);
         }
@@ -389,16 +427,23 @@ public class BabyPhotoSorter {
                     }
                 }
 
+                // Get the new name for the photo
                 String newName = p.getName(config);
 
                 // Check whether there is actually anything to do
+                // i.e. if the photo is already in the correct place and has the correct name just skip it
                 if (StringUtils.equals(p.getFile().getParentFile().getAbsolutePath(), targetDir.getAbsolutePath())) {
                     // Source and Target Directory are the same
                     if (StringUtils.equals(p.getFile().getName(), newName)) {
+                        // Source and Target Filename are also the same
+                        // Therefore nothing to do
                         if (LOGGER.isDebugEnabled()) {
                             LOGGER.debug("Photo {} is already sorted into the correct location",
                                     p.getFile().getAbsolutePath());
                         }
+                        
+                        // Skip this photo
+                        continue;
                     }
                 }
 
@@ -438,7 +483,7 @@ public class BabyPhotoSorter {
         for (String bracket : groups.keySet()) {
             LOGGER.info("Group {} contains {} photos", bracket, groups.get(bracket).size());
 
-            // Create the required subfolder
+            // Create the required sub-folder
             File bracketDir = null;
             if (this.subfolders && targetDir != null) {
                 bracketDir = new File(targetDir, bracket);

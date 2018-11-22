@@ -19,11 +19,19 @@ Then you can organise your photos, for example:
                       --source /my/photos/john/
 ```
 
+## Dry Run
+
+**IMPORTANT** - If you want to see what the tool will do prior to actually running it on your precious photos then you should use the `--dry-run` option.  This will enable verbose log output (also separately available via the `--verbose` option) and won't actually perform any mutative file system options i.e. it calculates and reports what the tool would do without actually doing it.
+
 # Organisation Criteria
 
 ## Photo Discovery
 
 Photos are discovered by scanning each provided source directory (via the `-s`/`--source` option) for files that have an appropriate extension.  By default we only look for `.jpg` and `.jpeg` files.  If you want to change the list of extensions looked for you can use the `-e`/`--extensions` option e.g. `--extensions .jpg,.jpeg,.png,.tiff,.raw`
+
+### Ignoring Directories
+
+If you have specific directories or sub-directories you don't wish to have organised you can specify these via the `--ignore <path>` option.
 
 ### Reorganisation
 
@@ -113,10 +121,6 @@ Optionally you can apply de-duplication to your photos via the `--de-duplicate` 
 Even with this option enabled no photos will be deleted by default without user consent, on the first duplicate detected you will be prompted whether you want to proceed with deletions.  If you don't permit this then the tool will abort.
 
 If you want to allow deletes by default you have to explicitly provide the `--allow-deletes` option.
-
-## Dry Run
-
-If you want to see what the tool will do prior to actually running it on your precious photos then you should use the `--dry-run` option.  This will enable verbose log output (also separately available via the `--verbose` option) and won't actually perform any mutative file system options i.e. it calculates what the tool would do without actually doing it.
 
 # License
 
