@@ -171,17 +171,25 @@ public class BabyPhotoSorter {
     private boolean dryRun = false;
 
     @Option(name = {
-            "--reorg" }, description = "Specifies that photos sorted from previous runs should be reorganised, this option only makes sense if --sub-folders is used and causes sub-folders of the target directories (or the source directories if no explicit target directory is given) to be rescanned and reorganised.  This can be useful if you want to change your organisation criteria or have imported new photos that overlap with your previously organised photos.")
+            "--reorg" }, description = "Specifies that photos sorted from previous runs should be reorganised.  This option only makes sense if using --subfolders or a target directory is used.  It causes sub-folders of the target directories (or the source directories if no explicit target directory is given) to be rescanned and reorganised.  This can be useful if you want to change your organisation criteria or have imported new photos that overlap with your previously organised photos.")
     @MutuallyExclusiveWith(tag = "preserveOrReorg")
     private boolean reorg = false;
 
     @Option(name = {
             "--ignore" }, description = "Specifies that one/more directories should be excluded from scanning.  This may be useful when using --reorg if you have some sub-folders organised by hand that you don't want modified.")
-    @Directory(mustExist = false)
+    @Directory(mustExist = false, writable = false)
     private List<String> ignore = new ArrayList<>();
 
-    @Option(name = { "--de-duplicate" }, description = "Specifies that duplicate photos should be detected and deleted")
+    @Option(name = {
+            "--de-duplicate" }, description = "Specifies that duplicate photos should be detected.  By default duplicates are deleted unless the --keep-duplicates option is used.  Note that you will be prompted before any deletes happen so you can choose to proceed with deletes or abort as desired, if you want to allow deletes regardless please use the --allow-deletes option.")
     private boolean deduplicate = false;
+
+    @Option(name = {
+            "--keep-duplicates" }, description = "Specifies that duplicate photos should be kept, this only has an effect when --de-duplicate is used.")
+    private boolean keepDuplicates = false;
+    
+    @Option(name = { "--allow-deletes" }, description = "Specifies that deletion of duplicate photos should be permitted, this only has an effect when --de-duplicate is used.")
+    private boolean allowDeletes = false;
 
     public void run() {
         // Dry Run implies Verbose
@@ -376,6 +384,7 @@ public class BabyPhotoSorter {
     }
 
     private void deduplicatePhotos(Configuration config, Map<String, List<Photo>> groups) {
+
         for (Entry<String, List<Photo>> group : groups.entrySet()) {
             Map<String, List<Photo>> photosByHash = new HashMap<>();
 
@@ -394,14 +403,36 @@ public class BabyPhotoSorter {
                     if (ps.size() <= 1)
                         continue;
 
+                    // Report the photos with the same hash
                     LOGGER.warn("{} Photos have the same file hash {}:", ps.size(), hashGroup.getKey());
                     for (Photo p : hashGroup.getValue()) {
                         LOGGER.warn("  {}", p.getFile().getAbsolutePath());
                     }
 
-                    if (!this.dryRun) {
+                    // Delete the duplicates unless a dry run or keeping
+                    // duplicates
+                    if (!this.dryRun && !this.keepDuplicates) {
                         while (ps.size() > 1) {
                             Photo toDelete = ps.get(1);
+
+                            if (!this.allowDeletes) {
+                                System.out.print("Are you sure you wish to delete duplicate photos? [y/n]: ");
+                                try {
+                                    int deletePromptResponse = System.in.read();
+                                    switch (deletePromptResponse) {
+                                    case 'Y':
+                                    case 'y':
+                                        this.allowDeletes = true;
+                                        break;
+                                    default:
+                                        LOGGER.warn("User refused to allow deletion of duplicate photos, sorting aborted!");
+                                        System.exit(1);
+                                    }
+                                } catch (IOException e) {
+                                    LOGGER.error("Bad response to user prompt - {}", e.getMessage());
+                                }
+                            }
+
                             if (!toDelete.getFile().delete()) {
                                 LOGGER.error("Failed to delete duplicate file {}",
                                         toDelete.getFile().getAbsolutePath());
@@ -503,10 +534,12 @@ public class BabyPhotoSorter {
                     if (this.subfolders) {
                         for (File subdir : targetDir.listFiles(new SubdirectoryFilter())) {
                             if (ignoredDirs.contains(subdir.getAbsolutePath())) {
-                                LOGGER.warn("Ignoring target sub-directory {} as requested, reorganisation may be ineffectual as a result", subdir.getAbsolutePath());
+                                LOGGER.warn(
+                                        "Ignoring target sub-directory {} as requested, reorganisation may be ineffectual as a result",
+                                        subdir.getAbsolutePath());
                                 continue;
                             }
-                            
+
                             LOGGER.info("Scanning target sub-directory {} for reorganisation",
                                     subdir.getAbsolutePath());
                             found = scanDirectory(subdir, extFilter, photos);
