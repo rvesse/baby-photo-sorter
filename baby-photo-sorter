@@ -1,3 +1,6 @@
 #!/bin/bash
 
-java -jar target/baby-photo-sorter-0.1.0-SNAPSHOT.jar "$@"
+SCRIPT_DIR=$(dirname ${BASH_SOURCE[0]})
+SCRIPT_DIR=$(cd ${SCRIPT_DIR} && pwd)
+
+java -jar ${SCRIPT_DIR}/target/baby-photo-sorter-0.1.0-SNAPSHOT.jar "$@"

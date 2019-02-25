@@ -23,7 +23,7 @@ Then you can organise your photos, for example:
 
 **IMPORTANT** - If you want to see what the tool will do prior to actually running it on your precious photos then you should use the `--dry-run` option.  This will enable verbose log output (also separately available via the `--verbose` option) and won't actually perform any mutative file system options i.e. it calculates and reports what the tool would do without actually doing it.
 
-# Organisation Criteria
+# Organisation Options
 
 ## Photo Discovery
 
@@ -121,6 +121,16 @@ Optionally you can apply de-duplication to your photos via the `--de-duplicate` 
 Even with this option enabled no photos will be deleted by default without user consent, on the first duplicate detected you will be prompted whether you want to proceed with deletions.  If you don't permit this then the tool will abort.
 
 If you want to allow deletes by default you have to explicitly provide the `--allow-deletes` option.
+
+# To Do
+
+Things I haven't got round to yet:
+
+- Further customisation of naming (add more fine grained date patterns)
+- Support customisation of group names (i.e. make it configurable rather than just age bracket/event name)
+- Auto-Events (e.g. birth, pregnancy etc)
+- More advanced de-duplication
+- Filtering out low quality images e.g. those shared via social media apps where the app silently compresses the photo often significantly reducing the quality
 
 # License
 

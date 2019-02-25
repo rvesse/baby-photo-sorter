@@ -86,7 +86,7 @@ import com.github.rvesse.baby.photo.sorter.model.naming.NamingScheme;
 public class BabyPhotoSorter {
 
     private static Logger LOGGER;
-    
+
     private static final String MAC_THUMBS_FILE = ".DS_Store";
     private static final String WINDOWS_THUMBS_FILE = "Thumbs.db";
 
@@ -306,7 +306,7 @@ public class BabyPhotoSorter {
 
     private int cleanEmptyDirectories(Configuration config, Collection<String> ignoredDirs) {
         int cleaned = 0;
-        
+
         SubdirectoryFilter subdirFilter = new SubdirectoryFilter();
         for (String source : this.sources) {
             if (source == null || source.length() == 0) {
@@ -321,15 +321,15 @@ public class BabyPhotoSorter {
                 LOGGER.warn("Ignoring directory {} as requested", sourceDir.getAbsolutePath());
                 continue;
             }
-            
+
             LOGGER.info("Looking for empty directories in source directory {}", sourceDir.getAbsolutePath());
-            
+
             // Clean any sub-directories found
             for (File subDir : sourceDir.listFiles(subdirFilter)) {
                 cleaned += cleanEmptyDirectories(subDir, ignoredDirs);
             }
         }
-        
+
         // Clean target directories if using them
         if (this.target != null) {
             File targetDir = new File(target);
@@ -341,13 +341,13 @@ public class BabyPhotoSorter {
                 LOGGER.warn("Ignoring target directory {} as requested", targetDir.getAbsolutePath());
                 return cleaned;
             }
-            
+
             // Clean any sub-directories found
             for (File subDir : targetDir.listFiles(subdirFilter)) {
                 cleaned += cleanEmptyDirectories(subDir, ignoredDirs);
             }
         }
-        
+
         return cleaned;
     }
 
@@ -372,7 +372,8 @@ public class BabyPhotoSorter {
             // Is is just the system Thumbnail database file present?
             // If so clean that up and then delete the directory as well
             File maybeThumbsFile = dir.listFiles()[0];
-            if (StringUtils.equals(maybeThumbsFile.getName(), MAC_THUMBS_FILE) || StringUtils.equals(maybeThumbsFile.getName(), WINDOWS_THUMBS_FILE)) {
+            if (StringUtils.equals(maybeThumbsFile.getName(), MAC_THUMBS_FILE)
+                    || StringUtils.equals(maybeThumbsFile.getName(), WINDOWS_THUMBS_FILE)) {
                 LOGGER.info("Removing empty directory {}", dir.getAbsolutePath());
                 if (!this.dryRun) {
                     if (!this.allowDeletes) {
@@ -386,17 +387,18 @@ public class BabyPhotoSorter {
                 return 1;
             }
         }
-        
+
         int cleaned = 0;
         for (File subDir : dir.listFiles(new SubdirectoryFilter())) {
             cleaned += cleanEmptyDirectories(subDir, ignoredDirs);
         }
-        
+
         if (cleaned > 0 && dir.exists() && !this.dryRun) {
-            // If we've cleaned some sub-directories then may be able to clean ourselves now
+            // If we've cleaned some sub-directories then may be able to clean
+            // ourselves now
             return cleaned + cleanEmptyDirectories(dir, ignoredDirs);
         }
-        
+
         return cleaned;
     }
 
@@ -431,7 +433,8 @@ public class BabyPhotoSorter {
                 String newName = p.getName(config);
 
                 // Check whether there is actually anything to do
-                // i.e. if the photo is already in the correct place and has the correct name just skip it
+                // i.e. if the photo is already in the correct place and has the
+                // correct name just skip it
                 if (StringUtils.equals(p.getFile().getParentFile().getAbsolutePath(), targetDir.getAbsolutePath())) {
                     // Source and Target Directory are the same
                     if (StringUtils.equals(p.getFile().getName(), newName)) {
@@ -441,7 +444,7 @@ public class BabyPhotoSorter {
                             LOGGER.debug("Photo {} is already sorted into the correct location",
                                     p.getFile().getAbsolutePath());
                         }
-                        
+
                         // Skip this photo
                         continue;
                     }
@@ -558,6 +561,12 @@ public class BabyPhotoSorter {
                                 System.exit(1);
                             }
                             ps.remove(1);
+
+                            // Need to also remove the deleted photo from the
+                            // source group as otherwise subsequent steps may
+                            // incorrectly attempt to process the now deleted
+                            // photo
+                            group.getValue().remove(toDelete);
                         }
                     }
                 }
@@ -577,8 +586,7 @@ public class BabyPhotoSorter {
                 this.allowDeletes = true;
                 break;
             default:
-                LOGGER.warn(
-                        "User refused to allow deletion of {}, sorting aborted!", items);
+                LOGGER.warn("User refused to allow deletion of {}, sorting aborted!", items);
                 System.exit(1);
             }
         } catch (IOException e) {

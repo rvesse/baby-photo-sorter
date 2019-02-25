@@ -284,4 +284,21 @@ public class Photo {
     public void setEvent(Event event) {
         this.event = event;
     }
+    
+    @Override
+    public boolean equals(Object other) {
+        if (other == null) return false;
+        
+        if (other instanceof Photo) {
+            Photo otherPhoto = (Photo) other;
+            return this.file.equals(otherPhoto.file);
+        } else {
+            return false;
+        }
+    }
+    
+    @Override
+    public int hashCode() {
+        return this.file.hashCode();
+    }
 }
