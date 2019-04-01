@@ -409,7 +409,8 @@ public class BabyPhotoSorter {
             Set<String> newLocations = new HashSet<>();
             Set<String> oldLocations = new HashSet<>();
             Set<String> conflicts = new HashSet<>();
-
+            int noOps = 0;
+            
             // Calculate Targets
             for (Photo p : ps) {
                 // Have to calculate target directory each time in case we are
@@ -437,10 +438,19 @@ public class BabyPhotoSorter {
                 // Get the new name for the photo
                 String newName = p.getName(config);
                 p.setTargetFile(new File(targetDir, newName));
+                
+                if (p.isNoOp()) {
+                    noOps++;
+                }
 
                 // Track for potential conflicting moves
                 oldLocations.add(p.getFile().getAbsolutePath());
                 newLocations.add(p.getTargetFile().getAbsolutePath());
+            }
+            
+            if (noOps == ps.size()) {
+                LOGGER.info("All photos in group {} are already in correct location, no reorganisation to do", groupName);
+                continue;
             }
 
             // Determine move conflicts
@@ -453,7 +463,7 @@ public class BabyPhotoSorter {
             }
 
             if (conflicts.size() > 0) {
-                LOGGER.warn("{} {} conflicts detected", this.preserveOriginals ? "copy" : "move");
+                LOGGER.warn("{} {} conflicts detected", conflicts.size(),  this.preserveOriginals ? "copy" : "move");
 
                 // Handle conflicts by changing the source location of the file
                 // to a temporary location
@@ -465,7 +475,9 @@ public class BabyPhotoSorter {
                     File tempFile = null;
                     try {
                         // Create a temporary file location
+                        // This creates a zero byte file which we should immediately delete
                         tempFile = File.createTempFile("photo", p.getExtension(), p.getTargetFile().getParentFile());
+                        tempFile.delete();
                         LOGGER.debug("Renaming Photo {} temporarily to {} to avoid {} conflicts",
                                 p.getFile().getAbsolutePath(), tempFile.getAbsolutePath(),
                                 this.preserveOriginals ? "copy" : "move");
@@ -497,10 +509,7 @@ public class BabyPhotoSorter {
                 // Check whether there is actually anything to do
                 // i.e. if the photo is already in the correct place and has the
                 // correct name just skip it
-                if (StringUtils.equals(p.getFile().getParentFile().getAbsolutePath(),
-                        p.getTargetFile().getParentFile().getAbsolutePath())) {
-                    // Source and Target Directory are the same
-                    if (StringUtils.equals(p.getFile().getName(), p.getTargetFile().getName())) {
+                if (p.isNoOp()) {
                         // Source and Target Filename are also the same
                         // Therefore nothing to do
                         if (LOGGER.isDebugEnabled()) {
@@ -512,7 +521,6 @@ public class BabyPhotoSorter {
                         oldLocations.remove(p.getFile().getAbsolutePath());
                         newLocations.remove(p.getTargetFile().getAbsolutePath());
                         continue;
-                    }
                 }
 
                 if (LOGGER.isDebugEnabled())
@@ -545,6 +553,16 @@ public class BabyPhotoSorter {
 
                 oldLocations.remove(p.getFile().getAbsolutePath());
                 newLocations.remove(p.getTargetFile().getAbsolutePath());
+            }
+            
+            // Verify that all the expected files exist
+            if (!this.dryRun) {
+                for (Photo p : ps) {
+                    if (!p.getTargetFile().exists()) {
+                        LOGGER.error("FATAL: Expected Photo {} was not found, data loss may have occurred!", p.getTargetFile().getAbsolutePath());
+                        System.exit(1);
+                    }
+                }
             }
         }
 
@@ -775,6 +793,12 @@ public class BabyPhotoSorter {
     private int scanDirectory(File sourceDir, FilenameFilter filter, List<Photo> photos, File originalSourceDirectory) {
         int found = 0;
         for (File f : sourceDir.listFiles(filter)) {
+            // Ignore and delete zero-length files
+            if (f.length() == 0) {
+                f.delete();
+                continue;
+            }
+
             Photo p = new Photo(f);
             p.setSourceDirectory(originalSourceDirectory);
             photos.add(p);

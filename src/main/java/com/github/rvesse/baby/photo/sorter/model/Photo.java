@@ -16,6 +16,7 @@ import org.apache.commons.imaging.formats.jpeg.JpegImageMetadata;
 import org.apache.commons.imaging.formats.tiff.TiffField;
 import org.apache.commons.imaging.formats.tiff.TiffImageMetadata;
 import org.apache.commons.imaging.formats.tiff.constants.ExifTagConstants;
+import org.apache.commons.lang3.StringUtils;
 import org.joda.time.Duration;
 import org.joda.time.Instant;
 import org.joda.time.Period;
@@ -64,17 +65,29 @@ public class Photo {
     public File getFile() {
         return this.file;
     }
-    
+
     public void setFile(File f) {
         this.file = f;
     }
-    
+
     public File getTargetFile() {
         return this.targetFile;
     }
-    
+
     public void setTargetFile(File target) {
         this.targetFile = target;
+    }
+
+    public boolean isNoOp() {
+        if (StringUtils.equals(this.file.getParentFile().getAbsolutePath(),
+                this.targetFile.getParentFile().getAbsolutePath())) {
+            // Source and Target Directory are the same
+            if (StringUtils.equals(this.file.getName(), this.targetFile.getName())) {
+                // Source and Target Filename are the same
+                return true;
+            }
+        }
+        return false;
     }
 
     public File getSourceDirectory() {
@@ -298,8 +311,7 @@ public class Photo {
     }
 
     public String getName(Configuration config) {
-        return config.namingPattern().getName(this, config)
-                + getExtension();
+        return config.namingPattern().getName(this, config) + getExtension();
     }
 
     public String getExtension() {
