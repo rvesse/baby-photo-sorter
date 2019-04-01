@@ -489,7 +489,7 @@ public class BabyPhotoSorter {
                             }
                         } else {
                             if (!this.dryRun) {
-                                Files.copy(p.getFile().toPath(), tempFile.toPath(), StandardCopyOption.ATOMIC_MOVE);
+                                Files.move(p.getFile().toPath(), tempFile.toPath(), StandardCopyOption.ATOMIC_MOVE);
                             }
                         }
 
