@@ -406,6 +406,11 @@ public class BabyPhotoSorter {
         for (String groupName : groups.keySet()) {
             List<Photo> ps = groups.get(groupName);
 
+            Set<String> newLocations = new HashSet<>();
+            Set<String> oldLocations = new HashSet<>();
+            Set<String> conflicts = new HashSet<>();
+
+            // Calculate Targets
             for (Photo p : ps) {
                 // Have to calculate target directory each time in case we are
                 // organising in-place and have multiple source directories
@@ -431,13 +436,71 @@ public class BabyPhotoSorter {
 
                 // Get the new name for the photo
                 String newName = p.getName(config);
+                p.setTargetFile(new File(targetDir, newName));
 
+                // Track for potential conflicting moves
+                oldLocations.add(p.getFile().getAbsolutePath());
+                newLocations.add(p.getTargetFile().getAbsolutePath());
+            }
+
+            // Determine move conflicts
+            for (String location : newLocations) {
+                if (oldLocations.contains(location)) {
+                    // Move Conflict, we're moving this file to a location that
+                    // is already in use so this could cause data loss!!!
+                    conflicts.add(location);
+                }
+            }
+
+            if (conflicts.size() > 0) {
+                LOGGER.warn("{} {} conflicts detected", this.preserveOriginals ? "copy" : "move");
+
+                // Handle conflicts by changing the source location of the file
+                // to a temporary location
+                for (Photo p : ps) {
+                    if (!conflicts.contains(p.getTargetFile().getAbsolutePath())) {
+                        continue;
+                    }
+
+                    File tempFile = null;
+                    try {
+                        // Create a temporary file location
+                        tempFile = File.createTempFile("photo", p.getExtension(), p.getTargetFile().getParentFile());
+                        LOGGER.debug("Renaming Photo {} temporarily to {} to avoid {} conflicts",
+                                p.getFile().getAbsolutePath(), tempFile.getAbsolutePath(),
+                                this.preserveOriginals ? "copy" : "move");
+
+                        // Copy/Move there as appropriate
+                        if (this.preserveOriginals) {
+                            if (!this.dryRun) {
+                                Files.copy(p.getFile().toPath(), tempFile.toPath(), StandardCopyOption.COPY_ATTRIBUTES);
+                            }
+                        } else {
+                            if (!this.dryRun) {
+                                Files.copy(p.getFile().toPath(), tempFile.toPath(), StandardCopyOption.ATOMIC_MOVE);
+                            }
+                        }
+
+                        // Update source file accordingly
+                        p.setFile(tempFile);
+                    } catch (IOException e) {
+                        LOGGER.error("Failed to temporarily rename photo {} to {} - {}", p.getFile().getAbsolutePath(),
+                                tempFile, e.getMessage());
+                        System.exit(1);
+                    }
+                }
+            }
+
+            // Do the actual copies/moves, we've resolved possible conflicts by
+            // copying/moving the sources to a temporary location at this point
+            for (Photo p : ps) {
                 // Check whether there is actually anything to do
                 // i.e. if the photo is already in the correct place and has the
                 // correct name just skip it
-                if (StringUtils.equals(p.getFile().getParentFile().getAbsolutePath(), targetDir.getAbsolutePath())) {
+                if (StringUtils.equals(p.getFile().getParentFile().getAbsolutePath(),
+                        p.getTargetFile().getParentFile().getAbsolutePath())) {
                     // Source and Target Directory are the same
-                    if (StringUtils.equals(p.getFile().getName(), newName)) {
+                    if (StringUtils.equals(p.getFile().getName(), p.getTargetFile().getName())) {
                         // Source and Target Filename are also the same
                         // Therefore nothing to do
                         if (LOGGER.isDebugEnabled()) {
@@ -446,36 +509,42 @@ public class BabyPhotoSorter {
                         }
 
                         // Skip this photo
+                        oldLocations.remove(p.getFile().getAbsolutePath());
+                        newLocations.remove(p.getTargetFile().getAbsolutePath());
                         continue;
                     }
                 }
 
                 if (LOGGER.isDebugEnabled())
                     LOGGER.debug("{} photo {} to folder {} as {}", this.preserveOriginals ? "Copying" : "Moving",
-                            p.getFile().getAbsolutePath(), targetDir.getAbsolutePath(), newName);
+                            p.getFile().getAbsolutePath(), p.getTargetFile().getParentFile().getAbsolutePath(),
+                            p.getTargetFile().getName());
 
                 // Perform actual move/copy
                 if (this.preserveOriginals) {
                     try {
                         if (!this.dryRun)
-                            Files.copy(p.getFile().toPath(), new File(targetDir, newName).toPath(),
+                            Files.copy(p.getFile().toPath(), p.getTargetFile().toPath(),
                                     StandardCopyOption.COPY_ATTRIBUTES);
                     } catch (IOException e) {
                         LOGGER.error("Failed to copy photo {} to directory {} - {}", p.getFile().getAbsolutePath(),
-                                targetDir.getAbsolutePath(), e.getMessage());
+                                p.getTargetFile().getParentFile().getAbsolutePath(), e.getMessage());
                         System.exit(1);
                     }
                 } else {
                     try {
                         if (!this.dryRun)
-                            Files.move(p.getFile().toPath(), new File(targetDir, newName).toPath(),
+                            Files.move(p.getFile().toPath(), p.getTargetFile().toPath(),
                                     StandardCopyOption.ATOMIC_MOVE);
                     } catch (IOException e) {
                         LOGGER.error("Failed to move photo {} to directory {} - {}", p.getFile().getAbsolutePath(),
-                                targetDir.getAbsolutePath(), e.getMessage());
+                                p.getTargetFile().getParentFile().getAbsolutePath(), e.getMessage());
                         System.exit(1);
                     }
                 }
+
+                oldLocations.remove(p.getFile().getAbsolutePath());
+                newLocations.remove(p.getTargetFile().getAbsolutePath());
             }
         }
 

@@ -8,6 +8,7 @@ import java.nio.file.Paths;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import org.apache.commons.codec.digest.DigestUtils;
+import org.apache.commons.imaging.ImageInfo;
 import org.apache.commons.imaging.ImageReadException;
 import org.apache.commons.imaging.Imaging;
 import org.apache.commons.imaging.common.ImageMetadata;
@@ -46,8 +47,8 @@ public class Photo {
                 .toFormatter();
     //@formatter:on
 
-    private final File file;
-    private File sourceDirectory;
+    private File file;
+    private File sourceDirectory, targetFile;
     private final Path path;
     private boolean loadedCreationDate = false, loadedHash = false;
     private Instant creationDate = null;
@@ -64,12 +65,44 @@ public class Photo {
         return this.file;
     }
     
+    public void setFile(File f) {
+        this.file = f;
+    }
+    
+    public File getTargetFile() {
+        return this.targetFile;
+    }
+    
+    public void setTargetFile(File target) {
+        this.targetFile = target;
+    }
+
     public File getSourceDirectory() {
         return this.sourceDirectory != null ? this.sourceDirectory : this.file.getParentFile();
     }
-    
+
     public void setSourceDirectory(File source) {
         this.sourceDirectory = source;
+    }
+
+    /**
+     * Gets the megapixels of the photo or NaN if they can't be determined
+     * 
+     * @return Megapixels or NaN
+     */
+    public synchronized double getMegapixels() {
+        ImageInfo info;
+        try {
+            info = Imaging.getImageInfo(this.file);
+            double pixels = info.getWidth() * info.getHeight();
+            return pixels / 1000000;
+
+        } catch (ImageReadException e) {
+            return Double.NaN;
+        } catch (IOException e) {
+            return Double.NaN;
+        }
+
     }
 
     /**
@@ -266,7 +299,11 @@ public class Photo {
 
     public String getName(Configuration config) {
         return config.namingPattern().getName(this, config)
-                + this.file.getName().substring(this.file.getName().lastIndexOf('.'));
+                + getExtension();
+    }
+
+    public String getExtension() {
+        return this.file.getName().substring(this.file.getName().lastIndexOf('.'));
     }
 
     public long getSequenceId() {
@@ -284,11 +321,12 @@ public class Photo {
     public void setEvent(Event event) {
         this.event = event;
     }
-    
+
     @Override
     public boolean equals(Object other) {
-        if (other == null) return false;
-        
+        if (other == null)
+            return false;
+
         if (other instanceof Photo) {
             Photo otherPhoto = (Photo) other;
             return this.file.equals(otherPhoto.file);
@@ -296,7 +334,7 @@ public class Photo {
             return false;
         }
     }
-    
+
     @Override
     public int hashCode() {
         return this.file.hashCode();
