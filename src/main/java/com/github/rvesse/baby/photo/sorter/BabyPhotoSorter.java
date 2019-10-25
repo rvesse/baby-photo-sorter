@@ -410,7 +410,7 @@ public class BabyPhotoSorter {
             Set<String> oldLocations = new HashSet<>();
             Set<String> conflicts = new HashSet<>();
             int noOps = 0;
-            
+
             // Calculate Targets
             for (Photo p : ps) {
                 // Have to calculate target directory each time in case we are
@@ -438,7 +438,7 @@ public class BabyPhotoSorter {
                 // Get the new name for the photo
                 String newName = p.getName(config);
                 p.setTargetFile(new File(targetDir, newName));
-                
+
                 if (p.isNoOp()) {
                     noOps++;
                 }
@@ -447,9 +447,10 @@ public class BabyPhotoSorter {
                 oldLocations.add(p.getFile().getAbsolutePath());
                 newLocations.add(p.getTargetFile().getAbsolutePath());
             }
-            
+
             if (noOps == ps.size()) {
-                LOGGER.info("All photos in group {} are already in correct location, no reorganisation to do", groupName);
+                LOGGER.info("All photos in group {} are already in correct location, no reorganisation to do",
+                        groupName);
                 continue;
             }
 
@@ -463,7 +464,7 @@ public class BabyPhotoSorter {
             }
 
             if (conflicts.size() > 0) {
-                LOGGER.warn("{} {} conflicts detected", conflicts.size(),  this.preserveOriginals ? "copy" : "move");
+                LOGGER.warn("{} {} conflicts detected", conflicts.size(), this.preserveOriginals ? "copy" : "move");
 
                 // Handle conflicts by changing the source location of the file
                 // to a temporary location
@@ -475,7 +476,8 @@ public class BabyPhotoSorter {
                     File tempFile = null;
                     try {
                         // Create a temporary file location
-                        // This creates a zero byte file which we should immediately delete
+                        // This creates a zero byte file which we should
+                        // immediately delete
                         tempFile = File.createTempFile("photo", p.getExtension(), p.getTargetFile().getParentFile());
                         tempFile.delete();
                         LOGGER.debug("Renaming Photo {} temporarily to {} to avoid {} conflicts",
@@ -510,23 +512,31 @@ public class BabyPhotoSorter {
                 // i.e. if the photo is already in the correct place and has the
                 // correct name just skip it
                 if (p.isNoOp()) {
-                        // Source and Target Filename are also the same
-                        // Therefore nothing to do
-                        if (LOGGER.isDebugEnabled()) {
-                            LOGGER.debug("Photo {} is already sorted into the correct location",
-                                    p.getFile().getAbsolutePath());
-                        }
+                    // Source and Target Filename are also the same
+                    // Therefore nothing to do
+                    if (LOGGER.isDebugEnabled()) {
+                        LOGGER.debug("Photo {} is already sorted into the correct location",
+                                p.getFile().getAbsolutePath());
+                    }
 
-                        // Skip this photo
-                        oldLocations.remove(p.getFile().getAbsolutePath());
-                        newLocations.remove(p.getTargetFile().getAbsolutePath());
-                        continue;
+                    // Skip this photo
+                    oldLocations.remove(p.getFile().getAbsolutePath());
+                    newLocations.remove(p.getTargetFile().getAbsolutePath());
+                    continue;
                 }
 
                 if (LOGGER.isDebugEnabled())
                     LOGGER.debug("{} photo {} to folder {} as {}", this.preserveOriginals ? "Copying" : "Moving",
                             p.getFile().getAbsolutePath(), p.getTargetFile().getParentFile().getAbsolutePath(),
                             p.getTargetFile().getName());
+
+                if (p.getTargetFile().exists()) {
+                    LOGGER.error(
+                            "Unable to {} photo {} to target file {} as a file of that name already exists, refusing to overwrite an existing file!",
+                            this.preserveOriginals ? "copy" : "move", p.getFile().getAbsolutePath(),
+                            p.getTargetFile().getAbsolutePath());
+                    System.exit(1);
+                }
 
                 // Perform actual move/copy
                 if (this.preserveOriginals) {
@@ -554,12 +564,13 @@ public class BabyPhotoSorter {
                 oldLocations.remove(p.getFile().getAbsolutePath());
                 newLocations.remove(p.getTargetFile().getAbsolutePath());
             }
-            
+
             // Verify that all the expected files exist
             if (!this.dryRun) {
                 for (Photo p : ps) {
                     if (!p.getTargetFile().exists()) {
-                        LOGGER.error("FATAL: Expected Photo {} was not found, data loss may have occurred!", p.getTargetFile().getAbsolutePath());
+                        LOGGER.error("FATAL: Expected Photo {} was not found, data loss may have occurred!",
+                                p.getTargetFile().getAbsolutePath());
                         System.exit(1);
                     }
                 }
