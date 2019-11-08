@@ -5,6 +5,7 @@ import java.io.File;
 import java.io.FileReader;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 
 import org.joda.time.Instant;
@@ -68,6 +69,10 @@ public class Events {
 
         return null;
     }
+    
+    public List<Event> getEvents() {
+        return Collections.unmodifiableList(this.events);
+    }
 
     public static Events parse(File f, DateTimeFormatter formatter) {
         List<Event> events = new ArrayList<>();
@@ -89,6 +94,8 @@ public class Events {
                 Instant start = Instant.parse(parts[0], formatter);
                 Instant end = Instant.parse(parts[1], formatter);
                 events.add(new Event(start, end, parts[2]));
+                
+                LOGGER.info("Event {} defined with start date {} and end date {}", parts[2], start, end);
             }
         } catch (Exception e) {
             LOGGER.error("Failed to parse events file {} - {}", f.getAbsolutePath(), e.getMessage());

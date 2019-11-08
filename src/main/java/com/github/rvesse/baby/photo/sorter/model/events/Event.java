@@ -8,6 +8,7 @@ public class Event {
 
     private final Instant start, end;
     private final String name;
+    private long photosInEvent = 0;
     
     public Event(Instant start, Instant end, String eventName) {
         if (start == null || end == null)
@@ -37,5 +38,13 @@ public class Event {
 
     public String name() {
         return this.name;
+    }
+    
+    public void increment() {
+        this.photosInEvent++;
+    }
+    
+    public long size() {
+        return this.photosInEvent;
     }
 }

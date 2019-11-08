@@ -421,7 +421,7 @@ public class BabyPhotoSorter {
                 }
 
                 // If not using an explicit target directory we won't have tried
-                // to creat the directory yet because the target directory
+                // to create the directory yet because the target directory
                 // depends on the source directory. In this case we need to try
                 // and create the directory here.
                 if (!targetDir.exists() || !targetDir.isDirectory()) {
@@ -445,7 +445,13 @@ public class BabyPhotoSorter {
 
                 // Track for potential conflicting moves
                 oldLocations.add(p.getFile().getAbsolutePath());
-                newLocations.add(p.getTargetFile().getAbsolutePath());
+                if (!newLocations.add(p.getTargetFile().getAbsolutePath())) {
+                    // We shouldn't ever calculate multiple photos targeted at
+                    // the same place but we should still check for this just in
+                    // case
+                    LOGGER.warn("Multiple photos targeted at file {}", p.getTargetFile().getAbsolutePath());
+                    conflicts.add(p.getTargetFile().getAbsolutePath());
+                }
             }
 
             if (noOps == ps.size()) {
@@ -464,15 +470,12 @@ public class BabyPhotoSorter {
             }
 
             if (conflicts.size() > 0) {
-                LOGGER.warn("{} {} conflicts detected", conflicts.size(), this.preserveOriginals ? "copy" : "move");
+                LOGGER.warn("{} {} conflicts detected for group {}", conflicts.size(),
+                        this.preserveOriginals ? "copy" : "move", groupName);
 
                 // Handle conflicts by changing the source location of the file
                 // to a temporary location
                 for (Photo p : ps) {
-                    if (!conflicts.contains(p.getTargetFile().getAbsolutePath())) {
-                        continue;
-                    }
-
                     File tempFile = null;
                     try {
                         // Create a temporary file location
@@ -701,6 +704,7 @@ public class BabyPhotoSorter {
             if (e != null) {
                 group = e.name();
                 p.setEvent(e);
+                e.increment();
             } else {
                 group = p.getAgeText(config);
             }
@@ -714,6 +718,16 @@ public class BabyPhotoSorter {
             }
             groups.get(group).add(p);
         }
+
+        // Issue warnings for any events that don't have any photos in them
+        for (Event event : config.events().getEvents()) {
+            if (event.size() == 0) {
+                LOGGER.warn(
+                        "Event {} with start date {} and end date {} did not match any photos - are you sure you defined the date range correctly?",
+                        event.name(), event.start(), event.end());
+            }
+        }
+
         LOGGER.info("Sorted {} photos into {} groups", photos.size(), groups.keySet().size());
         return groups;
     }
