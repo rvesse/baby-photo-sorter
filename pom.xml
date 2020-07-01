@@ -13,7 +13,7 @@
     <codec.version>1.11</codec.version>
     <imaging.version>1.0-SNAPSHOT</imaging.version>
     <joda-time.version>2.7</joda-time.version>
-    <log4j.version>2.11.1</log4j.version>
+    <log4j.version>2.13.3</log4j.version>
   </properties>
 
   <dependencies>
